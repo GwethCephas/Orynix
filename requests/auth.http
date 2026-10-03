@@ -1,0 +1,46 @@
+### Variables
+@baseUrl = http://localhost:8080
+@email = demo@example.com
+@password = password123
+
+### Register
+# @name register
+POST {{baseUrl}}/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Login
+# @name login
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Current user (requires an access token from register or login above)
+GET {{baseUrl}}/api/v1/users/me
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Refresh (rotates the refresh token — the old one becomes invalid)
+# @name refresh
+POST {{baseUrl}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{login.response.body.refreshToken}}"
+}
+
+### Logout (revokes the refresh token; requires a valid access token)
+POST {{baseUrl}}/api/v1/auth/logout
+Content-Type: application/json
+Authorization: Bearer {{login.response.body.accessToken}}
+
+{
+  "refreshToken": "{{refresh.response.body.refreshToken}}"
+}
