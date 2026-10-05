@@ -3,6 +3,9 @@ package com.cephCoding.orynix.common
 import com.cephCoding.orynix.common.exception.EmailAlreadyExistsException
 import com.cephCoding.orynix.common.exception.InvalidCredentialsException
 import com.cephCoding.orynix.common.exception.InvalidRefreshTokenException
+import com.cephCoding.orynix.common.exception.InvalidSymbolException
+import com.cephCoding.orynix.common.exception.InvalidTimeframeException
+import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -41,6 +44,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(NoSuchElementException::class)
     fun handleNotFound(ex: NoSuchElementException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.NOT_FOUND, ex.message ?: "Not found", request)
+
+    @ExceptionHandler(InvalidSymbolException::class, InvalidTimeframeException::class)
+    fun handleMarketDataValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(MarketDataProviderException::class)
+    fun handleMarketDataProviderFailure(ex: MarketDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Market data provider request failed", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {

@@ -1,6 +1,7 @@
 package com.cephCoding.orynix.support
 
 import com.cephCoding.orynix.auth.dto.AuthResponse
+import org.junit.jupiter.api.AfterEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
@@ -12,7 +13,7 @@ import tools.jackson.databind.ObjectMapper
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
-@Import(TestcontainersConfiguration::class)
+@Import(TestcontainersConfiguration::class, MarketDataTestConfiguration::class)
 abstract class AbstractIntegrationTest {
 
     @Autowired
@@ -20,6 +21,14 @@ abstract class AbstractIntegrationTest {
 
     @Autowired
     protected lateinit var objectMapper: ObjectMapper
+
+    @Autowired
+    protected lateinit var fakeMarketDataProvider: FakeMarketDataProvider
+
+    @AfterEach
+    fun resetFakeMarketDataProvider() {
+        fakeMarketDataProvider.reset()
+    }
 
     protected fun register(email: String, password: String = "password123"): AuthResponse {
         val response = mockMvc.post("/api/v1/auth/register") {

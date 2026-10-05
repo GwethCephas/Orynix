@@ -16,6 +16,10 @@ jwt:
   access-token-ttl-seconds: ${JWT_ACCESS_TOKEN_TTL_SECONDS:900}
   refresh-token-ttl-seconds: ${JWT_REFRESH_TOKEN_TTL_SECONDS:2592000}
 
+massive:
+  base-url: ${MASSIVE_BASE_URL:https://api.massive.com}
+  api-key: ${MASSIVE_API_KEY}
+
 management:
   endpoints:
     web:
