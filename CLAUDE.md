@@ -35,7 +35,7 @@ Android / Web
 
 - Authentication — **implemented** (register, login, refresh, logout)
 - User management — **implemented** (`/api/v1/users/me` only)
-- Market data — not implemented
+- Market data — **implemented** (historical daily OHLCV candles via Massive, see Section 6)
 - Technical analysis — not implemented
 - AI agents — not implemented
 - News analysis — not implemented
@@ -68,6 +68,9 @@ Actually in use, with the versions declared in `build.gradle.kts`:
 - Actuator (`spring-boot-starter-actuator`)
 - JWT via `io.jsonwebtoken` (jjwt) 0.13.0 — `jjwt-api`, `jjwt-impl`, `jjwt-gson`
 - `jackson-module-kotlin` from `tools.jackson.module` (Jackson 3 — see note below)
+- `org.springframework.boot:spring-boot-restclient` — provides the `RestClient.Builder` bean used
+  to call external HTTP APIs (currently Massive, see Section 6). See the Boot 4 module note below:
+  this is a separate artifact from `spring-boot-starter-webmvc`, not a transitive dependency of it.
 
 Test-only: the Boot 4 per-module test starters (`*-test` for webmvc, data-jpa, security,
 validation, actuator, flyway), `spring-boot-testcontainers`, `testcontainers-postgresql`,
@@ -89,6 +92,26 @@ Spring Boot 4 ships Jackson 3, not Jackson 2. Jackson's group ID moved from
 - Starter artifact names changed too (e.g. `spring-boot-starter-webmvc` instead of the old
   `spring-boot-starter-web`, `spring-boot-starter-flyway` instead of a bare `flyway-core`
   dependency). This is intentional, not a mistake to "fix" back to Boot 3 naming.
+
+### Boot 4 module note: `RestClient.Builder` is not bundled with webmvc
+
+Unlike Boot 3, `spring-boot-starter-webmvc` does **not** transitively bring in
+`RestClientAutoConfiguration` (which provides the `RestClient.Builder` bean). That autoconfiguration
+moved to its own module, `org.springframework.boot:spring-boot-restclient`
+(`org.springframework.boot.restclient.autoconfigure` package). Confusingly,
+`spring-boot-starter-webmvc-test` *does* pull in a `RestClient.Builder` bean for tests, so a context
+that works under `@SpringBootTest` can still fail at real `bootRun`/production time with
+`NoSuchBeanDefinitionException: RestClient$Builder` if the main `spring-boot-restclient` dependency
+is missing. If a future feature needs `RestClient` (or `RestTemplate`/`HttpServiceClient`
+autoconfiguration), add `spring-boot-restclient` explicitly as a main dependency — don't assume the
+webmvc starter covers it.
+
+Related: `@ConfigurationProperties` classes using constructor binding (immutable `data class`, no
+setters) must **not** also be annotated `@Component` — that routes construction through normal
+bean-definition autowiring, which tries to resolve each constructor parameter as its own bean (e.g.
+fails looking for a bean of type `String`) instead of binding from `application.yml`. Register them
+instead via `@ConfigurationPropertiesScan` on `OrynixApplication` (already enabled) and only
+`@ConfigurationProperties(prefix = "...")` on the properties class itself — see `MassiveProperties`.
 
 ### Spring Framework 7 / JSpecify nullability note
 
@@ -140,11 +163,22 @@ identical configuration share one `ApplicationContext` and therefore one contain
 new integration test class, extend `AbstractIntegrationTest` — do not declare another container
 anywhere else.
 
+The same context-cache concern applies to test doubles for external services, not just
+Testcontainers. `MarketDataTestConfiguration` provides a `@Primary` `FakeMarketDataProvider` bean
+and is `@Import`-ed directly into `AbstractIntegrationTest` (alongside `TestcontainersConfiguration`),
+not only on the market-data test classes — a different `@Import` set per test class would change
+the context-cache key and spin up a second `ApplicationContext` (and therefore a second Postgres
+container), reproducing the exact failure mode described above. Because the fake provider bean is a
+singleton shared across every test class in the suite, tests that configure it
+(`fakeMarketDataProvider.candlesToReturn = ...` / `.failure = ...`) rely on
+`AbstractIntegrationTest`'s `@AfterEach` reset to avoid leaking state into unrelated tests — don't
+remove that reset.
+
 ## 4. Architecture principles
 
 - The backend is the single source of truth. Android and web clients communicate only through
   the backend API.
-- Use feature-oriented package organization (see Section 6). Do not organize by technical layer
+- Use feature-oriented package organization (see Section 7). Do not organize by technical layer
   at the top level (no top-level `controllers/`, `services/`, `repositories/`).
 - Prefer simple designs over unnecessary abstractions. Don't add an interface for a class with
   one implementation. Don't add a generic/base class until there are at least two concrete needs
@@ -198,10 +232,66 @@ prefix — requires authentication. Do not collapse this into a `/api/v1/auth/**
 would make logout publicly callable without a token.
 
 Unauthenticated/forbidden requests to protected endpoints get the same JSON error shape as
-everything else (see Section 7) via a custom `AuthenticationEntryPoint` /
+everything else (see Section 8) via a custom `AuthenticationEntryPoint` /
 `AccessDeniedHandler` — not Spring Security's default body.
 
-## 6. Package structure
+## 6. Market data architecture
+
+Implemented: historical **daily** OHLCV candles, sourced from **Massive** (formerly Polygon.io,
+`https://api.massive.com`), normalized into an Orynix domain model, persisted in PostgreSQL, and
+exposed via `GET /api/v1/market-data/candles?symbol=AAPL&timeframe=1d` (protected — requires a
+valid access token, same as every other non-auth endpoint).
+
+**Layering** — four deliberately separated representations of a candle, so the rest of Orynix
+never touches Massive's response shape:
+
+1. `market/provider/massive/dto/` — `MassiveAggregatesResponse` / `MassiveBar`, the raw JSON shape
+   of Massive's aggregates endpoint (`GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}`).
+   Only fields Orynix actually uses are mapped (`t`, `o`, `h`, `l`, `c`, `v`) — unknown/unused
+   fields (`vw`, `n`, `otc`, etc.) are ignored, not modeled.
+2. `market/domain/` — `Candle` (symbol, timeframe, timestamp, OHLCV as `BigDecimal`) and
+   `CandleTimeframe` (currently just `DAILY` / code `"1d"`), the provider-agnostic business model.
+   `MarketDataService` and `MarketDataProvider` only ever see this type, never a Massive DTO.
+3. `market/model/` — `MarketDataCandle`, the JPA persistence entity (table `market_data_candles`).
+4. `market/dto/` — `CandleResponse`, the REST response DTO.
+
+**Provider abstraction** (`market/provider/`): `MarketDataProvider` is an interface
+(`fetchDailyCandles(symbol, from, to): List<Candle>`); `MassiveMarketDataProvider` is the only
+implementation today. Swapping providers later means adding a new `MarketDataProvider`
+implementation — `MarketDataService`, the domain model, and the REST layer do not change.
+`MassiveMarketDataProvider` sends the API key as an `Authorization: Bearer` header (not the
+`?apiKey=` query-string form Massive also supports) specifically so it never ends up in a logged or
+echoed request URI, and wraps any `RestClientException` in a sanitized `MarketDataProviderException`
+(no upstream body, no request URI) before it can reach `GlobalExceptionHandler`'s stack-trace
+logging.
+
+**Fixed lookback window (current limitation)**: the REST endpoint takes only `symbol` and
+`timeframe` — no `from`/`to` params yet. `MarketDataService` always requests the last 365 days
+(ending today) from the provider. Adding optional date-range params is future work, not yet done.
+
+**Dedup strategy**: `MarketDataService.getDailyCandles` fetches from the provider, queries
+`MarketDataCandleRepository.findBySymbolAndTimeframeAndTimestampIn` for timestamps already
+persisted for that symbol/timeframe, filters the fetched list down to genuinely new candles before
+`saveAll`, and returns the full fetched list (not just what was newly inserted) either way. This
+makes re-fetching the same window idempotent — no duplicate rows — without relying on catching a
+unique-constraint violation per row. The table's unique constraint on
+`(symbol, timeframe, timestamp)` is the backstop, not the primary mechanism. Symbol input is
+trimmed and uppercased before both the provider call and the dedup check, so `aapl` and `AAPL`
+can't produce two rows.
+
+**Configuration**: `MASSIVE_API_KEY` (required, no default — a secret) and `MASSIVE_BASE_URL`
+(optional, defaults to `https://api.massive.com`), bound via `MassiveProperties`
+(`@ConfigurationProperties(prefix = "massive")`, registered through `@ConfigurationPropertiesScan`
+on `OrynixApplication` — see Section 3's Boot 4 module note for why this class must not also be
+`@Component`).
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): other timeframes
+(weekly/hourly/etc. — `CandleTimeframe` has only `DAILY` today), optional `from`/`to` query params,
+pagination (Massive's `next_url` is not followed — the fixed 365-day/5000-row window is assumed to
+fit in one page), technical indicators computed from candles, and any other market-data endpoint
+beyond `GET .../candles`.
+
+## 7. Package structure
 
 Root package: `com.cephCoding.orynix`.
 
@@ -224,17 +314,31 @@ com.cephCoding.orynix
     repository/    UserRepository
     model/         User entity
     dto/           UserResponse
+  market/
+    controller/    MarketDataController
+    service/       MarketDataService (fetch + dedup + persist)
+    provider/       MarketDataProvider interface
+      massive/      MassiveMarketDataProvider, MassiveProperties
+        dto/         MassiveAggregatesResponse, MassiveBar (raw Massive JSON shape)
+    domain/         Candle, CandleTimeframe (provider-agnostic business model)
+    model/          MarketDataCandle entity
+    repository/     MarketDataCandleRepository
+    dto/            CandleResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
 feature-oriented, not layer-oriented, organization: adding a new capability means adding a new
 top-level package, not touching a shared `controllers/` or `services/` directory used by every
-feature. Future features (`market/`, `analysis/`, `agents/`, `prediction/`, `risk/`, `signals/`,
-`portfolio/`, `backtesting/`, `notifications/`, `websocket/`) should follow the same internal
-shape and only be created when there is a concrete task for them — do not scaffold empty future
-packages ahead of time.
+feature. `market/` additionally has `domain/` and `provider/` subpackages — see Section 6 for why:
+that feature explicitly requires separating the external provider's DTOs, the provider-agnostic
+domain model, the persistence entity, and the REST DTO, which `auth`/`user` didn't need. Future
+features (`analysis/`, `agents/`, `prediction/`, `risk/`, `signals/`, `portfolio/`, `backtesting/`,
+`notifications/`, `websocket/`) should follow the base `controller/service/repository/model/dto`
+shape (adding `domain/`/`provider/` only if they also wrap an external data source) and only be
+created when there is a concrete task for them — do not scaffold empty future packages ahead of
+time.
 
-## 7. API conventions
+## 8. API conventions
 
 - All endpoints are versioned under `/api/v1/...`.
 - Controllers accept and return explicit request/response DTOs only — never JPA entities.
@@ -258,10 +362,12 @@ packages ahead of time.
   - `404` — resource not found
   - `409` — duplicate email on registration
   - `500` — unexpected server error (never leaks a stack trace or internal detail)
+  - `502` — external market-data provider (Massive) request failed; the sanitized
+    `MarketDataProviderException` message is returned, never the upstream body or request URI
 - Authentication requirement per endpoint must be explicit in `SecurityConfig`, matched by exact
   method + path, not inferred from a prefix.
 
-## 8. Database conventions
+## 9. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
   database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
@@ -283,8 +389,13 @@ packages ahead of time.
 - Constraints are defined in the migration SQL (`NOT NULL`, `UNIQUE`, foreign keys), not just
   inferred from annotations.
 - `refresh_tokens.user_id` is a foreign key to `users.id` with `ON DELETE CASCADE`.
+- `market_data_candles` has a unique constraint on `(symbol, timeframe, timestamp)` — it both
+  prevents duplicate candle rows and serves as the index for the `symbol + timeframe + timestamp`
+  query pattern, so no separate index was added. OHLCV columns are `NUMERIC`, not `DOUBLE
+  PRECISION`/float — see the "never use `Double` for money" instinct applied to volume too, since
+  Massive's `v` field is a JSON number, not guaranteed to be integral.
 
-## 9. Development rules for Claude
+## 10. Development rules for Claude
 
 - Read this file before making changes.
 - Inspect the existing implementation before modifying it — don't assume; check.

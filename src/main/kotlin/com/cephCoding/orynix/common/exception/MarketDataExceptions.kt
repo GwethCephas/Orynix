@@ -1,0 +1,7 @@
+package com.cephCoding.orynix.common.exception
+
+class InvalidSymbolException(symbol: String) : RuntimeException("Invalid symbol: $symbol")
+
+class InvalidTimeframeException(timeframe: String) : RuntimeException("Invalid timeframe: $timeframe")
+
+class MarketDataProviderException(message: String) : RuntimeException(message)

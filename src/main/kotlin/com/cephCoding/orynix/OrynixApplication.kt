@@ -1,6 +1,7 @@
 package com.cephCoding.orynix
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan
 import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
 import org.springframework.boot.runApplication
 
@@ -9,6 +10,7 @@ import org.springframework.boot.runApplication
 // Spring Boot still auto-configures an unused in-memory user with a random generated password
 // logged on every startup.
 @SpringBootApplication(exclude = [UserDetailsServiceAutoConfiguration::class])
+@ConfigurationPropertiesScan
 class OrynixApplication
 
 fun main(args: Array<String>) {
