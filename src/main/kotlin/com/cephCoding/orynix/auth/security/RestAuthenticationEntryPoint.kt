@@ -19,6 +19,7 @@ class RestAuthenticationEntryPoint(private val objectMapper: ObjectMapper) : Aut
         authException: AuthenticationException,
     ) {
         response.status = HttpStatus.UNAUTHORIZED.value()
+        response.characterEncoding = "UTF-8"
         response.contentType = MediaType.APPLICATION_JSON_VALUE
         val body = ErrorResponse(
             status = HttpStatus.UNAUTHORIZED.value(),

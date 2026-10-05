@@ -19,6 +19,7 @@ class RestAccessDeniedHandler(private val objectMapper: ObjectMapper) : AccessDe
         accessDeniedException: AccessDeniedException,
     ) {
         response.status = HttpStatus.FORBIDDEN.value()
+        response.characterEncoding = "UTF-8"
         response.contentType = MediaType.APPLICATION_JSON_VALUE
         val body = ErrorResponse(
             status = HttpStatus.FORBIDDEN.value(),
