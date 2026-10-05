@@ -112,6 +112,13 @@ Verified for this project (Boot 4.1.1 / Testcontainers 2.0.5):
 - Testcontainers 2.x artifact IDs all gained a `testcontainers-` prefix:
   `org.testcontainers:testcontainers-postgresql`, `org.testcontainers:testcontainers-junit-jupiter`
   — not the old bare `org.testcontainers:postgresql` / `org.testcontainers:junit-jupiter`.
+- `UserDetailsServiceAutoConfiguration` moved to
+  `org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration` (not
+  `org.springframework.boot.autoconfigure.security.servlet`) — Boot 4 split security
+  auto-configuration out of `spring-boot-autoconfigure` into the `spring-boot-security` module.
+  This project excludes it in `OrynixApplication` since there's no `UserDetailsService` here (see
+  Section 5); without the exclusion, Boot auto-configures an unused in-memory user with a
+  randomly generated password logged on every startup.
 
 If a future task needs another Boot 4 test-autoconfiguration annotation or another Testcontainers
 module, verify the actual package/artifact by inspecting the resolved jar
@@ -257,7 +264,14 @@ packages ahead of time.
 ## 8. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
-  database-generated.
+  database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
+  `isNew()` check treats every entity as already persisted and routes `repository.save()`
+  through `em.merge()`, never `em.persist()`. `merge()` returns a *different* managed
+  instance than the one passed in — `AuditingEntityListener` populates that returned copy, not
+  your original object. Any code that needs `@CreatedDate`/`@LastModifiedDate` (or other
+  listener-populated fields) immediately after creation must use the entity `save()`/
+  `saveAndFlush()` returns, not the entity it was given, and must flush if it needs the value
+  in the same transaction (see `AuthService.register()` for the pattern).
 - Table and column names are `snake_case`.
 - All schema changes go through Flyway migrations in `src/main/resources/db/migration`, named
   `V<n>__description.sql`. `spring.jpa.hibernate.ddl-auto=none` always — Hibernate never owns the

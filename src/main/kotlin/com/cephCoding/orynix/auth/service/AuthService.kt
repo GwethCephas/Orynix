@@ -39,8 +39,13 @@ class AuthService(
         }
         // PasswordEncoder.encode is JSpecify @Nullable only for a null input; non-null in → non-null out.
         val user = User(email = request.email, passwordHash = passwordEncoder.encode(request.password)!!)
-        userRepository.save(user)
-        return issueTokens(user)
+        // User.id is assigned client-side (non-null), so Spring Data's default isNew() check
+        // treats this as an update and routes save() through em.merge(), not em.persist() —
+        // merge() returns a different managed copy, which is the one AuditingEntityListener
+        // actually populates. saveAndFlush's return value (not `user`) must be used below, and
+        // the flush is needed so createdAt/updatedAt are set before issueTokens() reads them.
+        val savedUser = userRepository.saveAndFlush(user)
+        return issueTokens(savedUser)
     }
 
     @Transactional
