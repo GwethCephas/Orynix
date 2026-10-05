@@ -1,0 +1,40 @@
+body {
+  font-family: sans-serif;
+  max-width: 480px;
+  margin: 40px auto;
+  padding: 0 16px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+input, button {
+  padding: 8px;
+  font-size: 14px;
+}
+
+#message {
+  font-weight: bold;
+}
+
+#message.success {
+  color: green;
+}
+
+#message.error {
+  color: red;
+}
+
+.user-info {
+  border: 1px solid #ccc;
+  padding: 12px;
+  border-radius: 4px;
+}

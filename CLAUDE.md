@@ -115,9 +115,9 @@ Verified for this project (Boot 4.1.1 / Testcontainers 2.0.5):
 - `UserDetailsServiceAutoConfiguration` moved to
   `org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration` (not
   `org.springframework.boot.autoconfigure.security.servlet`) — Boot 4 split security
-  auto-configuration out of `spring-boot-autoconfigure` into the `spring-boot-security` module.
+  autoconfiguration out of `spring-boot-autoconfigure` into the `spring-boot-security` module.
   This project excludes it in `OrynixApplication` since there's no `UserDetailsService` here (see
-  Section 5); without the exclusion, Boot auto-configures an unused in-memory user with a
+  Section 5); without the exclusion, Boot autoconfigures an unused in-memory user with a
   randomly generated password logged on every startup.
 
 If a future task needs another Boot 4 test-autoconfiguration annotation or another Testcontainers
@@ -181,7 +181,7 @@ Implemented flow:
    stateless, role-free JWT API; credential checks happen directly in `AuthService`.
 4. **Access tokens** are short-lived JWTs (HS256, signed with `JWT_SECRET`). Claims are limited
    to `sub` (user id), `iat`, `exp` — no email, no roles, nothing sensitive.
-5. **Refresh tokens** are opaque random values, not JWTs. Only a SHA-256 hash of the refresh
+5. **Refresh tokens** are opaque random values, not JWTs. Only an SHA-256 hash of the refresh
    token is persisted (`refresh_tokens` table), alongside an expiry and a `revoked` flag.
 6. **Refresh** (`POST /api/v1/auth/refresh`, public) — the client presents a refresh token. The
    server validates it's unexpired and unrevoked, then **rotates** it: the presented token is
