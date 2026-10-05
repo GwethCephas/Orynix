@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: orynix
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/orynix}
+    username: ${DB_USERNAME:orynix}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-ttl-seconds: ${JWT_ACCESS_TOKEN_TTL_SECONDS:900}
+  refresh-token-ttl-seconds: ${JWT_REFRESH_TOKEN_TTL_SECONDS:2592000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
