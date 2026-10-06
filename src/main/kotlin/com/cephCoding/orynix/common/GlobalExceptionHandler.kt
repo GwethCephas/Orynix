@@ -1,6 +1,8 @@
 package com.cephCoding.orynix.common
 
+import com.cephCoding.orynix.common.exception.CompanyNotFoundException
 import com.cephCoding.orynix.common.exception.EmailAlreadyExistsException
+import com.cephCoding.orynix.common.exception.FundamentalDataProviderException
 import com.cephCoding.orynix.common.exception.InvalidCredentialsException
 import com.cephCoding.orynix.common.exception.InvalidRefreshTokenException
 import com.cephCoding.orynix.common.exception.InsufficientCandleDataException
@@ -46,6 +48,10 @@ class GlobalExceptionHandler {
     fun handleNotFound(ex: NoSuchElementException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.NOT_FOUND, ex.message ?: "Not found", request)
 
+    @ExceptionHandler(CompanyNotFoundException::class)
+    fun handleCompanyNotFound(ex: CompanyNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "Company not found", request)
+
     @ExceptionHandler(InvalidSymbolException::class, InvalidTimeframeException::class)
     fun handleMarketDataValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
@@ -53,6 +59,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(MarketDataProviderException::class)
     fun handleMarketDataProviderFailure(ex: MarketDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Market data provider request failed", request)
+
+    @ExceptionHandler(FundamentalDataProviderException::class)
+    fun handleFundamentalDataProviderFailure(ex: FundamentalDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Fundamental data provider request failed", request)
 
     @ExceptionHandler(InsufficientCandleDataException::class)
     fun handleInsufficientCandleData(ex: InsufficientCandleDataException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =

@@ -13,7 +13,7 @@ import tools.jackson.databind.ObjectMapper
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
-@Import(TestcontainersConfiguration::class, MarketDataTestConfiguration::class)
+@Import(TestcontainersConfiguration::class, MarketDataTestConfiguration::class, FundamentalDataTestConfiguration::class)
 abstract class AbstractIntegrationTest {
 
     @Autowired
@@ -25,9 +25,17 @@ abstract class AbstractIntegrationTest {
     @Autowired
     protected lateinit var fakeMarketDataProvider: FakeMarketDataProvider
 
+    @Autowired
+    protected lateinit var fakeFundamentalDataProvider: FakeFundamentalDataProvider
+
     @AfterEach
     fun resetFakeMarketDataProvider() {
         fakeMarketDataProvider.reset()
+    }
+
+    @AfterEach
+    fun resetFakeFundamentalDataProvider() {
+        fakeFundamentalDataProvider.reset()
     }
 
     protected fun register(email: String, password: String = "password123"): AuthResponse {
