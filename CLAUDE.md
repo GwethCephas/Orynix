@@ -43,6 +43,7 @@ Android / Web
 - Prediction — not implemented
 - Risk management — not implemented
 - Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8)
+- Fundamentals — **implemented** (on-demand company information only via Massive, see Section 9)
 - Portfolio — not implemented
 - Backtesting — not implemented
 - Paper trading — not implemented
@@ -86,6 +87,15 @@ Spring Boot 4 ships Jackson 3, not Jackson 2. Jackson's group ID moved from
 
 - Never add a `com.fasterxml.jackson.databind` import. If a Jackson type is needed, it comes
   from `tools.jackson.*`.
+- **Exception, verified by inspecting the resolved jars (`unzip -l <jar> | grep ClassName`), not
+  assumed**: basic annotations (`@JsonProperty`, etc.) stayed at the Jackson 2.x group id by
+  design — Jackson 3's own `jackson-databind` depends on
+  `com.fasterxml.jackson.core:jackson-annotations:2.21`; there is no `tools.jackson.annotation`
+  package. `com.fasterxml.jackson.annotation.*` is therefore the one sanctioned `com.fasterxml`
+  import in this codebase — it carries no `ObjectMapper`/databind code, so it doesn't create the
+  second competing databind runtime the ban above actually guards against. Needed the first time
+  in `fundamentals/provider/massive/dto/` to map Massive's snake_case ticker-details JSON keys
+  (`primary_exchange`, `market_cap`, etc. — see Section 9) onto camelCase Kotlin properties.
 - JWT signing deliberately uses **jjwt-gson**, not jjwt-jackson, specifically to avoid pulling a
   Jackson 2 dependency onto the classpath next to Spring's Jackson 3. Do not "simplify" this to
   jjwt-jackson later without re-checking this still holds.
@@ -178,7 +188,7 @@ remove that reset.
 
 - The backend is the single source of truth. Android and web clients communicate only through
   the backend API.
-- Use feature-oriented package organization (see Section 9). Do not organize by technical layer
+- Use feature-oriented package organization (see Section 10). Do not organize by technical layer
   at the top level (no top-level `controllers/`, `services/`, `repositories/`).
 - Prefer simple designs over unnecessary abstractions. Don't add an interface for a class with
   one implementation. Don't add a generic/base class until there are at least two concrete needs
@@ -232,7 +242,7 @@ prefix — requires authentication. Do not collapse this into a `/api/v1/auth/**
 would make logout publicly callable without a token.
 
 Unauthenticated/forbidden requests to protected endpoints get the same JSON error shape as
-everything else (see Section 10) via a custom `AuthenticationEntryPoint` /
+everything else (see Section 11) via a custom `AuthenticationEntryPoint` /
 `AccessDeniedHandler` — not Spring Security's default body.
 
 ## 6. Market data architecture
@@ -436,7 +446,65 @@ ENTRY/EXIT.
 recommendations, any LLM/AI involvement, signal persistence/caching, and any signal endpoint beyond
 `GET .../signals`.
 
-## 9. Package structure
+## 9. Fundamental data architecture
+
+Implemented: on-demand company reference information, sourced from **Massive**
+(`GET /v3/reference/tickers/{ticker}`), exposed via `GET /api/v1/fundamentals?symbol=AAPL`
+(protected — no `SecurityConfig` entry; falls through to `anyRequest().authenticated()` like
+every other non-auth endpoint):
+
+```
+Massive -> FundamentalDataProvider -> FundamentalAnalysisService -> REST API
+```
+
+This is a **separate provider hierarchy from `MarketDataProvider`**, not an extension of it —
+fetching a company profile is conceptually unrelated to fetching OHLCV candles.
+`FundamentalAnalysisService` does not depend on `MarketDataService`; no candles are needed for
+company reference data. It reuses `MassiveProperties` (baseUrl/apiKey) as-is — no new
+`@ConfigurationProperties` class was needed.
+
+**Scope for this phase, exactly**: company name, exchange, industry, and market capitalization
+only. Symbol validation duplicates `MarketDataService`'s regex (`^[A-Z.]{1,10}$`) locally rather
+than sharing it — deliberate duplication over introducing a shared `SymbolValidator` utility for
+four lines of code, per Section 4's "don't add an abstraction for one shared need" principle;
+`FundamentalAnalysisService` has no dependency on `MarketDataService` to inherit validation
+through "for free" the way `technicalanalysis`/`signals` do.
+
+**No `sector` field.** Massive's ticker-details response provides no GICS-style sector anywhere —
+only `sic_code`/`sic_description`, a SIC industry classification, not a sector grouping.
+`CompanyProfile.industry` is sourced from `sic_description`; there is no sector field and no
+SIC-to-sector mapping table. Do not add one without a concrete data source for it.
+
+**Known limitation — other fundamentals categories are entitlement-blocked, not unimplemented by
+choice.** The deprecated `GET /vX/reference/financials` endpoint (balance sheet, income statement,
+cash flow — the source of P/E, margins, growth rates, debt-to-equity, and cash flow) sunsets
+2026-10-09 and already intermittently returns `410 Gone`. Its documented successor,
+`GET /stocks/financials/v1/balance-sheets` (confirmed via Massive's own docs — presumably
+analogous `income-statements`/`cash-flow-statements` paths exist under the same
+`/stocks/financials/v1/` prefix), returns `403 Forbidden` —
+`"You are not entitled to this data. Please upgrade your plan."` — under the current Massive
+plan. This is a plan-tier lockout, not a missing-field or wrong-path problem. Valuation,
+profitability, growth, balance-sheet, and cash-flow categories are deliberately out of scope until
+the Massive plan is upgraded. Do not add speculative provider/mapping code for these endpoints —
+revisit `/stocks/financials/v1/balance-sheets` specifically once entitled.
+
+**Layering**: `fundamentals/provider/massive/dto/` holds `MassiveTickerDetailsResponse`/
+`MassiveTickerDetails`, the raw Massive JSON shape (snake_case keys — `primary_exchange`,
+`sic_description`, `market_cap` — mapped via `@JsonProperty`, see Section 3's annotations
+exception). Only fields `CompanyProfile` actually consumes are modeled, matching `MassiveBar`'s
+"only `t,o,h,l,c,v` modeled" precedent. `fundamentals/domain/` holds `CompanyProfile`
+(provider-agnostic) and `FundamentalAnalysisResult` (envelope: `symbol` + `company`, the same
+nested-value-object idiom `TechnicalAnalysisResult` uses for `macd`/`bollingerBands` — see Section
+7 — chosen specifically so future categories like `valuation`/`profitability` can be added as
+sibling keys without a breaking restructure). `fundamentals/dto/` mirrors this one level down into
+REST DTOs with the same `companion object { from(domain) }` idiom used everywhere else. No
+`model/`/`repository/` — nothing is persisted, matching `technicalanalysis`/`signals`.
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): valuation,
+profitability, growth, balance-sheet, and cash-flow categories (blocked by entitlement, see
+above), any AI/LLM involvement, and any BUY/SELL recommendation or scoring derived from this data.
+
+## 10. Package structure
 
 Root package: `com.cephCoding.orynix`.
 
@@ -483,6 +551,14 @@ com.cephCoding.orynix
                      VolatilityRule, VolumeRule, PriceMomentumRule (pure rule functions)
     domain/         Signal, SignalType, OverallBias, TechnicalSignalSummary
     dto/            SignalResponse, TechnicalSignalSummaryResponse
+  fundamentals/
+    controller/    FundamentalAnalysisController
+    service/       FundamentalAnalysisService
+    provider/       FundamentalDataProvider interface
+      massive/       MassiveFundamentalDataProvider
+        dto/          MassiveTickerDetailsResponse, MassiveTickerDetails (raw Massive JSON shape)
+    domain/         CompanyProfile, FundamentalAnalysisResult
+    dto/            CompanyProfileResponse, FundamentalAnalysisResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -496,14 +572,17 @@ why: it needs the same seam between computed value and REST DTO that `market/dom
 plus a home for pure, Spring-free calculation functions kept separate from service orchestration.
 `signals/` additionally has `domain/` and `rule/` subpackages for the same two reasons — `rule/` is
 named differently from `indicator/` because it holds condition *rules* evaluated over
-already-computed indicators, not indicator calculations themselves. Future features (`agents/`,
-`prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`, `websocket/`) should follow
-the base `controller/service/repository/model/dto` shape (adding `domain/`/`provider/`/`indicator/`/
-`rule/`-style subpackages only if they have the same kind of concrete need `market/`/
-`technicalanalysis/`/`signals/` had) and only be created when there is a concrete task for them —
-do not scaffold empty future packages ahead of time.
+already-computed indicators, not indicator calculations themselves. `fundamentals/` has its own
+`domain/` and `provider/` subpackages for the same reason `market/` does — a second, independent
+provider hierarchy (`FundamentalDataProvider`/`MassiveFundamentalDataProvider`), not an extension
+of `MarketDataProvider`, because fetching a company profile is unrelated to fetching candles.
+Future features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
+`websocket/`) should follow the base `controller/service/repository/model/dto` shape (adding
+`domain/`/`provider/`/`indicator/`/`rule/`-style subpackages only if they have the same kind of
+concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/` had) and only be created
+when there is a concrete task for them — do not scaffold empty future packages ahead of time.
 
-## 10. API conventions
+## 11. API conventions
 
 - All endpoints are versioned under `/api/v1/...`.
 - Controllers accept and return explicit request/response DTOs only — never JPA entities.
@@ -524,17 +603,19 @@ do not scaffold empty future packages ahead of time.
   - `204` — successful logout (no content)
   - `400` — validation errors
   - `401` — invalid credentials, invalid/expired/revoked token, missing authentication
-  - `404` — resource not found
+  - `404` — resource not found; also a fundamentals request for a symbol Massive has no ticker
+    record for (`CompanyNotFoundException`)
   - `409` — duplicate email on registration
   - `422` — well-formed technical-analysis request with insufficient historical candle data to
     compute the requested indicators (`InsufficientCandleDataException`)
   - `500` — unexpected server error (never leaks a stack trace or internal detail)
-  - `502` — external market-data provider (Massive) request failed; the sanitized
-    `MarketDataProviderException` message is returned, never the upstream body or request URI
+  - `502` — an external provider (Massive) request failed; the sanitized
+    `MarketDataProviderException` (market data) or `FundamentalDataProviderException`
+    (fundamentals) message is returned, never the upstream body or request URI
 - Authentication requirement per endpoint must be explicit in `SecurityConfig`, matched by exact
   method + path, not inferred from a prefix.
 
-## 11. Database conventions
+## 12. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
   database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
@@ -562,7 +643,7 @@ do not scaffold empty future packages ahead of time.
   PRECISION`/float — see the "never use `Double` for money" instinct applied to volume too, since
   Massive's `v` field is a JSON number, not guaranteed to be integral.
 
-## 12. Development rules for Claude
+## 13. Development rules for Claude
 
 - Read this file before making changes.
 - Inspect the existing implementation before modifying it — don't assume; check.
