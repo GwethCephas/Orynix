@@ -36,13 +36,13 @@ Android / Web
 - Authentication — **implemented** (register, login, refresh, logout)
 - User management — **implemented** (`/api/v1/users/me` only)
 - Market data — **implemented** (historical daily OHLCV candles via Massive, see Section 6)
-- Technical analysis — not implemented
+- Technical analysis — **implemented** (on-demand indicators computed from candles, see Section 7)
 - AI agents — not implemented
 - News analysis — not implemented
 - Sentiment analysis — not implemented
 - Prediction — not implemented
 - Risk management — not implemented
-- Signals — not implemented
+- Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8)
 - Portfolio — not implemented
 - Backtesting — not implemented
 - Paper trading — not implemented
@@ -178,7 +178,7 @@ remove that reset.
 
 - The backend is the single source of truth. Android and web clients communicate only through
   the backend API.
-- Use feature-oriented package organization (see Section 7). Do not organize by technical layer
+- Use feature-oriented package organization (see Section 9). Do not organize by technical layer
   at the top level (no top-level `controllers/`, `services/`, `repositories/`).
 - Prefer simple designs over unnecessary abstractions. Don't add an interface for a class with
   one implementation. Don't add a generic/base class until there are at least two concrete needs
@@ -232,7 +232,7 @@ prefix — requires authentication. Do not collapse this into a `/api/v1/auth/**
 would make logout publicly callable without a token.
 
 Unauthenticated/forbidden requests to protected endpoints get the same JSON error shape as
-everything else (see Section 8) via a custom `AuthenticationEntryPoint` /
+everything else (see Section 10) via a custom `AuthenticationEntryPoint` /
 `AccessDeniedHandler` — not Spring Security's default body.
 
 ## 6. Market data architecture
@@ -287,11 +287,156 @@ on `OrynixApplication` — see Section 3's Boot 4 module note for why this class
 
 **Not yet implemented** (do not build ahead of a concrete task, per Section 2): other timeframes
 (weekly/hourly/etc. — `CandleTimeframe` has only `DAILY` today), optional `from`/`to` query params,
-pagination (Massive's `next_url` is not followed — the fixed 365-day/5000-row window is assumed to
-fit in one page), technical indicators computed from candles, and any other market-data endpoint
-beyond `GET .../candles`.
+and pagination (Massive's `next_url` is not followed — the fixed 365-day/5000-row window is assumed
+to fit in one page). Technical indicators computed from these candles are implemented — see Section 7.
 
-## 7. Package structure
+## 7. Technical analysis architecture
+
+Implemented: a deterministic, on-demand technical-analysis engine computed from the daily candles
+`MarketDataService` already fetches/persists, exposed via
+`GET /api/v1/technical-analysis?symbol=AAPL&timeframe=1d` (protected, same as every other
+non-auth endpoint). The technical-analysis layer talks only to `MarketDataService` — it never calls
+`MarketDataProvider`/Massive directly, so it stays correct if the market-data provider ever changes:
+
+```
+Massive -> MarketDataProvider -> MarketDataService -> TechnicalAnalysisService -> REST API
+```
+
+**Package layout** (`technicalanalysis/`) adds two subpackages beyond the base
+`controller/service/dto` shape, each justified individually (no `model/`/`repository/` — nothing is
+persisted in this phase):
+
+- `indicator/` — pure, Spring-free, `BigDecimal`-free calculation functions (`Sma`, `Ema`, `Rsi`,
+  `MacdCalculator`, `BollingerBandsCalculator`, `Atr`, `VolumeIndicators`), each operating on plain
+  `List<Double>` and independently unit-testable with zero Spring context. No monolithic calculator
+  class — one small object per indicator family.
+- `domain/` — mirrors `market/domain/`'s role: a seam between what `TechnicalAnalysisService`
+  computes (`TechnicalAnalysisResult`, `Macd`, `BollingerBands`) and the REST DTO, so the JSON shape
+  can evolve independently of the computed-value types.
+
+**Indicators** (daily candles only — `CandleTimeframe` still has just `DAILY`/`"1d"`):
+
+- Trend: SMA20, SMA50, EMA20
+- Momentum: RSI14, MACD (fast EMA12 / slow EMA26 / signal EMA9)
+- Volatility: Bollinger Bands (period 20, ±2 population standard deviations), ATR14
+- Volume: Volume SMA20, volume change percentage
+
+**EMA/Wilder seeding convention** (a deliberate, non-obvious choice, since this isn't standardized
+across implementations and determinism matters here): every EMA — standard or Wilder — is seeded
+with the simple average of its first `period` values; recursive smoothing starts from the value
+immediately after that seed. Standard EMA uses `alpha = 2/(period+1)`; RSI14 and ATR14 use Wilder
+smoothing (`alpha = 1/period`) over price changes / true ranges respectively; MACD's signal line is
+the same SMA-seeded EMA applied to the MACD line itself, not to closes.
+
+**Not persisted**: indicators are calculated fresh on every request from whatever candles
+`MarketDataService.getDailyCandles` returns. There is no indicator entity, repository, or
+migration in this phase — see Section 2. Caching/persistence may be added later if performance
+requires it, but only for a concrete, stated need.
+
+**Minimum candle requirement**: `TechnicalAnalysisService` requires at least 50 candles (the
+largest minimum among all eight indicators — MACD needs `26 + 9 - 1 = 34`, SMA50 needs 50, and 50
+is the larger of the two) before calculating anything. Fewer than that throws
+`InsufficientCandleDataException`, mapped by `GlobalExceptionHandler` to `422 Unprocessable
+Entity` — distinct from the `400` used for a malformed symbol/timeframe, since the request itself
+is well-formed but the upstream data volume isn't enough to satisfy it. Values are never
+fabricated or padded to meet this floor.
+
+**Double/BigDecimal boundary**: `Candle`'s OHLCV fields are `BigDecimal`, but indicator math (EMA
+recursion, RSI/ATR Wilder smoothing, MACD, Bollinger standard deviation) is naturally expressed in
+floating point. `TechnicalAnalysisService` converts `Candle` `BigDecimal` fields to `Double` exactly
+once (on the way in) and converts back to `BigDecimal` exactly once per result field (on the way
+out), always via `BigDecimal.valueOf(Double)` — never the `BigDecimal(Double)` constructor, which
+captures the exact binary floating-point expansion instead of the decimal value a user would
+expect. Price-like fields (SMA/EMA/RSI/MACD/Bollinger/ATR) round to scale 4; volume fields (volume
+SMA, volume change percentage) round to scale 2; both use `RoundingMode.HALF_UP`.
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): trading
+recommendations, any LLM/AI involvement, other timeframes (weekly/hourly/etc. — bounded by
+`CandleTimeframe` itself, see Section 6), indicator persistence/caching, and any technical-analysis
+endpoint beyond `GET .../technical-analysis`. Deterministic condition signals (not buy/sell
+recommendations) built on top of these indicators are implemented — see Section 8.
+
+**History extension for the signal layer**: `TechnicalAnalysisService` also exposes
+`getAnalysisHistory(symbol, timeframe): TechnicalAnalysisHistory`, a second method alongside
+`getAnalysis` (whose own behavior/floor is unchanged) that returns the current observation, the
+previous period's observation, and the raw candles used — needed because detecting a transition
+(e.g. a moving-average crossover) requires comparing two points in time, not just the latest one.
+It has its own independent floor, `MINIMUM_CANDLES_WITH_HISTORY = MINIMUM_CANDLES + 1` (51 today):
+every indicator series here gains exactly one element per extra candle, so one more candle than
+the single-value floor guarantees a "previous" value exists for every indicator, not just the one
+(SMA50) driving the floor itself.
+
+## 8. Signal & pattern analysis architecture
+
+Implemented: a deterministic layer that turns technical-analysis indicators into structured,
+explainable market *conditions* — trend, crossovers, RSI/MACD/Bollinger/ATR/volume conditions,
+price momentum — exposed via `GET /api/v1/signals?symbol=AAPL&timeframe=1d` (protected, same as
+every other non-auth endpoint). This is **not** an AI/LLM layer and produces no BUY/SELL/trading
+recommendations — it reports conditions a future agent layer can reason over, nothing more:
+
+```
+Massive -> MarketDataProvider -> MarketDataService -> TechnicalAnalysisService -> SignalAnalysisService -> REST API
+```
+
+**Package layout** (`signals/`) adds `rule/` and `domain/` beyond the base
+`controller/service/dto` shape, for the same reason `technicalanalysis/` has `indicator/`/`domain/`
+(Section 7): `rule/` holds pure, Spring-free, independently unit-testable functions, one per signal
+family (`TrendRule`, `CrossoverRule`, `RsiRule`, `MacdRule`, `BollingerBandsRule`, `VolatilityRule`,
+`VolumeRule`, `PriceMomentumRule`, each co-locating its own state enum); `domain/` is the seam
+between what `SignalAnalysisService` computes (`Signal`, `TechnicalSignalSummary`) and the REST DTO.
+No `model/`/`repository/` — nothing is persisted.
+
+**The eight signals** (all computed from `TechnicalAnalysisService.getAnalysisHistory`'s current/
+previous observations and raw candles — never from Massive/`MarketDataProvider` directly):
+
+- **TREND**: BULLISH if `EMA20 > SMA20 > SMA50`, BEARISH if reversed, else NEUTRAL.
+- **CROSSOVER**: BULLISH_CROSSOVER/BEARISH_CROSSOVER only on an actual transition of `EMA20` vs
+  `SMA50` between the previous and current observation, else NONE — "already above" is not a
+  crossover.
+- **RSI**: OVERBOUGHT at RSI14 ≥ 70, OVERSOLD at ≤ 30, else NEUTRAL — a condition, not a directional
+  call (overbought is not "bearish").
+- **MACD**: a crossover of the MACD/signal lines takes priority; otherwise falls back to
+  BULLISH_MOMENTUM/BEARISH_MOMENTUM/NEUTRAL_MOMENTUM from the histogram's sign (via `signum()`, not
+  `==`, since `BigDecimal` equality is scale-sensitive) — one combined signal, not two.
+- **BOLLINGER_BANDS**: PRICE_ABOVE_UPPER_BAND/PRICE_BELOW_LOWER_BAND outside the bands (checked
+  first), else PRICE_NEAR_UPPER_BAND/PRICE_NEAR_LOWER_BAND within 1% of a band, else
+  PRICE_WITHIN_BANDS.
+- **VOLATILITY**: LOW/NORMAL/HIGH from `ATR14 / closePrice * 100` (a relative measure — a raw
+  absolute ATR threshold isn't portable across assets at different price levels), thresholds 1%/3%.
+- **VOLUME**: HIGH/NORMAL/LOW from `latestVolume / volumeSma20`, thresholds 1.5×/0.5×; a zero
+  `volumeSma20` reports NORMAL with no value (undefined ratio, not fabricated).
+- **PRICE_MOMENTUM**: POSITIVE/NEGATIVE/FLAT from the percentage close change over the last 10
+  candles, ±1% flat band.
+
+All thresholds above are `private const val`s in `SignalAnalysisService`'s companion object — the
+same convention `TechnicalAnalysisService` already uses for its period constants, not a new
+`@ConfigurationProperties` class (`MassiveProperties` remains the only one, reserved for
+secrets/environment-varying values).
+
+**`strength`, `metadata`, and a per-signal `timestamp` are all omitted** from the `Signal` domain
+type: none of the eight rules yield an objectively-justifiable strength score from the available
+data, and a metadata map or a timestamp identical across all eight signals in one response would be
+unused surface area.
+
+**Aggregation** (`TechnicalSignalSummary`): a signal is excluded from the bullish/bearish/neutral
+tally only when its directional content derives from the *exact same underlying series comparison*
+as an already-counted signal. Concretely: **CROSSOVER is excluded** from the tally (still fully
+reported in the `signals` list) because it and TREND both derive from the identical
+EMA20/SMA20/SMA50 relationship — TREND is the steady-state view, CROSSOVER the transition-event view
+of that same relationship, so counting both would double-count one fact. **RSI, BOLLINGER_BANDS,
+VOLATILITY, and VOLUME always count as neutral**, regardless of their specific state, since none of
+them are directional per their own definitions above. **TREND, MACD, and PRICE_MOMENTUM are the only
+directional contributors**, each from a disjoint series. `neutralSignalCount` is always
+`signals.size - bullishSignalCount - bearishSignalCount`, so the three counts always partition all
+eight signals. `overallBias` is `BULLISH`/`BEARISH` on a strict majority of those three counts, else
+`NEUTRAL` — named `OverallBias`, never `TradeDirection`/`Recommendation`, and never BUY/SELL/TRADE/
+ENTRY/EXIT.
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): trading
+recommendations, any LLM/AI involvement, signal persistence/caching, and any signal endpoint beyond
+`GET .../signals`.
+
+## 9. Package structure
 
 Root package: `com.cephCoding.orynix`.
 
@@ -324,6 +469,20 @@ com.cephCoding.orynix
     model/          MarketDataCandle entity
     repository/     MarketDataCandleRepository
     dto/            CandleResponse
+  technicalanalysis/
+    controller/    TechnicalAnalysisController
+    service/       TechnicalAnalysisService (fetch via MarketDataService + calculate)
+    indicator/      Sma, Ema, Rsi, MacdCalculator, BollingerBandsCalculator, Atr,
+                     VolumeIndicators (pure calculation functions)
+    domain/         TechnicalAnalysisResult, Macd, BollingerBands, TechnicalAnalysisHistory
+    dto/            TechnicalAnalysisResponse, MacdResponse, BollingerBandsResponse
+  signals/
+    controller/    SignalAnalysisController
+    service/       SignalAnalysisService (orchestration + aggregation)
+    rule/           TrendRule, CrossoverRule, RsiRule, MacdRule, BollingerBandsRule,
+                     VolatilityRule, VolumeRule, PriceMomentumRule (pure rule functions)
+    domain/         Signal, SignalType, OverallBias, TechnicalSignalSummary
+    dto/            SignalResponse, TechnicalSignalSummaryResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -331,14 +490,20 @@ feature-oriented, not layer-oriented, organization: adding a new capability mean
 top-level package, not touching a shared `controllers/` or `services/` directory used by every
 feature. `market/` additionally has `domain/` and `provider/` subpackages — see Section 6 for why:
 that feature explicitly requires separating the external provider's DTOs, the provider-agnostic
-domain model, the persistence entity, and the REST DTO, which `auth`/`user` didn't need. Future
-features (`analysis/`, `agents/`, `prediction/`, `risk/`, `signals/`, `portfolio/`, `backtesting/`,
-`notifications/`, `websocket/`) should follow the base `controller/service/repository/model/dto`
-shape (adding `domain/`/`provider/` only if they also wrap an external data source) and only be
-created when there is a concrete task for them — do not scaffold empty future packages ahead of
-time.
+domain model, the persistence entity, and the REST DTO, which `auth`/`user` didn't need.
+`technicalanalysis/` additionally has `domain/` and `indicator/` subpackages — see Section 7 for
+why: it needs the same seam between computed value and REST DTO that `market/domain/` provides,
+plus a home for pure, Spring-free calculation functions kept separate from service orchestration.
+`signals/` additionally has `domain/` and `rule/` subpackages for the same two reasons — `rule/` is
+named differently from `indicator/` because it holds condition *rules* evaluated over
+already-computed indicators, not indicator calculations themselves. Future features (`agents/`,
+`prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`, `websocket/`) should follow
+the base `controller/service/repository/model/dto` shape (adding `domain/`/`provider/`/`indicator/`/
+`rule/`-style subpackages only if they have the same kind of concrete need `market/`/
+`technicalanalysis/`/`signals/` had) and only be created when there is a concrete task for them —
+do not scaffold empty future packages ahead of time.
 
-## 8. API conventions
+## 10. API conventions
 
 - All endpoints are versioned under `/api/v1/...`.
 - Controllers accept and return explicit request/response DTOs only — never JPA entities.
@@ -361,13 +526,15 @@ time.
   - `401` — invalid credentials, invalid/expired/revoked token, missing authentication
   - `404` — resource not found
   - `409` — duplicate email on registration
+  - `422` — well-formed technical-analysis request with insufficient historical candle data to
+    compute the requested indicators (`InsufficientCandleDataException`)
   - `500` — unexpected server error (never leaks a stack trace or internal detail)
   - `502` — external market-data provider (Massive) request failed; the sanitized
     `MarketDataProviderException` message is returned, never the upstream body or request URI
 - Authentication requirement per endpoint must be explicit in `SecurityConfig`, matched by exact
   method + path, not inferred from a prefix.
 
-## 9. Database conventions
+## 11. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
   database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
@@ -395,7 +562,7 @@ time.
   PRECISION`/float — see the "never use `Double` for money" instinct applied to volume too, since
   Massive's `v` field is a JSON number, not guaranteed to be integral.
 
-## 10. Development rules for Claude
+## 12. Development rules for Claude
 
 - Read this file before making changes.
 - Inspect the existing implementation before modifying it — don't assume; check.
