@@ -3,6 +3,7 @@ package com.cephCoding.orynix.common
 import com.cephCoding.orynix.common.exception.EmailAlreadyExistsException
 import com.cephCoding.orynix.common.exception.InvalidCredentialsException
 import com.cephCoding.orynix.common.exception.InvalidRefreshTokenException
+import com.cephCoding.orynix.common.exception.InsufficientCandleDataException
 import com.cephCoding.orynix.common.exception.InvalidSymbolException
 import com.cephCoding.orynix.common.exception.InvalidTimeframeException
 import com.cephCoding.orynix.common.exception.MarketDataProviderException
@@ -52,6 +53,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(MarketDataProviderException::class)
     fun handleMarketDataProviderFailure(ex: MarketDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Market data provider request failed", request)
+
+    @ExceptionHandler(InsufficientCandleDataException::class)
+    fun handleInsufficientCandleData(ex: InsufficientCandleDataException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.UNPROCESSABLE_ENTITY, ex.message ?: "Insufficient candle data", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {
