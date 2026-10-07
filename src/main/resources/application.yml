@@ -20,6 +20,11 @@ massive:
   base-url: ${MASSIVE_BASE_URL:https://api.massive.com}
   api-key: ${MASSIVE_API_KEY}
 
+huggingface:
+  base-url: ${HUGGINGFACE_BASE_URL:https://router.huggingface.co/hf-inference/models}
+  api-key: ${HUGGING_API_KEY}
+  model: ${HUGGINGFACE_MODEL:ProsusAI/finbert}
+
 management:
   endpoints:
     web:

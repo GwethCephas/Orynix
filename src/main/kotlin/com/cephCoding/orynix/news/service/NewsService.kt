@@ -2,6 +2,7 @@ package com.cephCoding.orynix.news.service
 
 import com.cephCoding.orynix.common.exception.InvalidNewsLimitException
 import com.cephCoding.orynix.common.exception.InvalidSymbolException
+import com.cephCoding.orynix.common.exception.NewsArticleNotFoundException
 import com.cephCoding.orynix.news.domain.NewsArticle
 import com.cephCoding.orynix.news.domain.NewsResult
 import com.cephCoding.orynix.news.model.NewsArticleEntity
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 
 @Service
 class NewsService(
@@ -35,6 +37,11 @@ class NewsService(
 
         return NewsResult(symbol = symbol, articles = articles)
     }
+
+    fun getArticleById(id: UUID): NewsArticle =
+        repository.findById(id)
+            .map(NewsArticleEntity::toDomain)
+            .orElseThrow { NewsArticleNotFoundException(id) }
 
     private fun isFresh(symbol: String, limit: Int): Boolean {
         val persisted = repository.findBySymbolOrderByPublishedAtDesc(symbol, PageRequest.of(0, limit))

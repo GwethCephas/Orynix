@@ -40,7 +40,8 @@ Android / Web
 - AI agents — not implemented
 - News analysis — **implemented** (persisted, symbol-scoped news retrieval via Massive, see
   Section 10)
-- Sentiment analysis — not implemented
+- Sentiment analysis — **implemented** (FinBERT via Hugging Face Inference API, per-article cached,
+  symbol-level aggregation, see Section 11)
 - Prediction — not implemented
 - Risk management — not implemented
 - Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8)
@@ -189,7 +190,7 @@ remove that reset.
 
 - The backend is the single source of truth. Android and web clients communicate only through
   the backend API.
-- Use feature-oriented package organization (see Section 11). Do not organize by technical layer
+- Use feature-oriented package organization (see Section 12). Do not organize by technical layer
   at the top level (no top-level `controllers/`, `services/`, `repositories/`).
 - Prefer simple designs over unnecessary abstractions. Don't add an interface for a class with
   one implementation. Don't add a generic/base class until there are at least two concrete needs
@@ -243,7 +244,7 @@ prefix — requires authentication. Do not collapse this into a `/api/v1/auth/**
 would make logout publicly callable without a token.
 
 Unauthenticated/forbidden requests to protected endpoints get the same JSON error shape as
-everything else (see Section 12) via a custom `AuthenticationEntryPoint` /
+everything else (see Section 13) via a custom `AuthenticationEntryPoint` /
 `AccessDeniedHandler` — not Spring Security's default body.
 
 ## 6. Market data architecture
@@ -614,11 +615,163 @@ additionally tracks `callCount` (not present on the other fakes) specifically to
 freshness window actually skips the provider on a repeat call — the first test of its kind to need
 this.
 
-**Not yet implemented** (do not build ahead of a concrete task, per Section 2): sentiment analysis
-(see the `insights` discovery above), any AI/LLM involvement, any news endpoint beyond
-`GET .../news`, and any prediction/recommendation derived from news content.
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): any AI/agent
+involvement, any news endpoint beyond `GET .../news`, and any prediction/recommendation derived
+from news content. Sentiment analysis (which also does not use the `insights` field discovered
+above) is implemented — see Section 11.
 
-## 11. Package structure
+## 11. Sentiment analysis architecture
+
+Implemented: per-article sentiment classification and deterministic symbol-level aggregation, built
+on top of the news feature (Section 10). Sourced from **FinBERT via Hugging Face's Inference API**
+(`ProsusAI/finbert` — explicitly listed by Hugging Face's own docs as a recommended model for
+text-classification, Apache-2.0 licensed, commercial use permitted), exposed via
+`GET /api/v1/news/{newsId}/sentiment` (single article, analyze-on-demand) and
+`GET /api/v1/news/sentiment?symbol=AAPL&limit=20` (symbol-level aggregate), both protected like
+every other non-auth endpoint. No AI agents, no prediction, no trading recommendations — this layer
+only classifies and aggregates.
+
+```
+Hugging Face -> SentimentAnalyzer -> SentimentService -> REST API
+                       ^
+                NewsService (for article text + lookup by id)
+```
+
+**Chosen over an LLM-based approach** specifically because sentiment here is **permanently
+cacheable per article** — a given article's sentiment never changes once computed — which fits a
+metered free tier (Hugging Face's free tier is ~300 req/hour) far better than an LLM API with no
+free tier at all. Each article is analyzed at most once, ever, per `(analyzer, model)` pair.
+
+**`SentimentController` maps under `/api/v1/news`** (URL namespace) while living in the top-level
+`sentiment/` package (package ownership) — these are independent axes, not an oversight. Two
+controllers sharing a path prefix with non-colliding sub-paths is unremarkable in Spring MVC:
+`NewsController`'s bare `GET /api/v1/news` never collides with
+`GET /api/v1/news/{newsId}/sentiment` or `GET /api/v1/news/sentiment`. "Analyze on GET" also has
+direct precedent already — `GET /api/v1/news` itself calls Massive and persists rows on a plain GET
+when its cache is stale, so this isn't a new REST-purity concession.
+
+**One minimal, additive addition to `NewsService`**: `getArticleById(id: UUID): NewsArticle`
+(throwing the new `NewsArticleNotFoundException` → 404 if missing). `SentimentService` needs
+single-article lookup by id, and consistent with every cross-feature dependency chain shown in
+Sections 7–10 (`technicalanalysis` only ever talks to `MarketDataService`, `signals` only to
+`TechnicalAnalysisService`, and so on — never a feature reaching into another feature's repository
+directly), `SentimentService` depends on `NewsService`, not `NewsArticleRepository`. No other change
+to `NewsService`.
+
+**Package layout** (`sentiment/`) combines the `provider/`+`domain/` shape from `fundamentals/`
+(external provider abstraction) with the `model/`+`repository/` shape from `market/`/`news/`
+(persistence), because this feature needs both — not a new pattern. The interface subpackage is
+named `analyzer/`, not `provider/`: the project already names subpackages after the abstraction
+they hold, not after "is this an external HTTP call" (`rule/` vs `indicator/` are both
+external-free abstractions with different names for different roles); the interface here is
+`SentimentAnalyzer`, so the package is `analyzer/`. The vendor-specific implementation still lives
+in a `huggingface/` subfolder exactly mirroring `provider/massive/`'s internal shape. Any future
+vendor-calling abstraction that isn't literally fetching market/news "data" should follow this same
+naming-after-the-abstraction rule rather than defaulting to `provider/`.
+
+**`SentimentAnalyzer` interface** exposes `analyzerName`/`modelName` as properties, not as part of
+`analyze()`'s return value — an architectural requirement, not a style choice: the dedup/cache check
+("does sentiment already exist for this article+analyzer+model") must run *before* `analyze()` is
+ever called, since that's the entire point of caching and skipping the paid Hugging Face call. If
+identity only existed in the return value, the service couldn't query the cache until after paying
+for the call it was trying to avoid.
+
+**Score normalization**: FinBERT returns three softmax probabilities (positive/negative/neutral),
+not a single scalar. Orynix normalizes `score = P(positive) - P(negative)`, range `[-1, 1]`, and
+`confidence` = the winning label's own probability, range `[0, 1]`. Both are `BigDecimal` at scale
+4 (not technicalanalysis's scale 2, and not signals' scale 2 either) — chosen because these values
+get *averaged* across many articles during aggregation, where 2-decimal rounding would visibly
+clump values before averaging. All comparisons use `compareTo`, never `==` (BigDecimal equality is
+scale-sensitive). Text sent to the model is `title`, or `"$title. $description"` when a description
+exists — `title` alone is always sufficient input because the news feature's own provider mapper
+already guarantees it's present (Section 10's structurally-required trio), so there is no "no
+usable text" exception path to write for a case that cannot occur.
+
+**Persistence** (`news_sentiments`, FK to `news_articles.id` `ON DELETE CASCADE`): unique constraint
+on `(news_article_id, analyzer, model)`, not just `news_article_id` — this is what allows the same
+article to be re-analyzed under a future model version without destroying the historical judgment
+from the old one. **No separate index** — worked through the same way `news_articles` needed one and
+`market_data_candles` didn't: the only two read patterns are a point lookup
+("does a row exist for this article+analyzer+model", served directly by the unique constraint) and
+a batch lookup for aggregation ("all current-model rows for a set of article ids", served by the
+constraint's leftmost-prefix `news_article_id` plus an `analyzer`/`model` filter). This holds
+**only because `symbol` is never denormalized onto this table** — aggregation already has the
+article-id list from `NewsService.getNews`, so it never needs to query sentiment by symbol
+directly; do not "fix" this by adding a symbol column or a symbol-based index without re-checking
+that assumption. `sentiment` is persisted as a plain `VARCHAR`, manually mapped (`.name`/
+`Sentiment.valueOf(...)`) — no `@Enumerated`, matching `MarketDataCandle.timeframe`'s precedent.
+`analyzed_at` is set explicitly at construction (`Instant.now()`), not via `@CreatedDate` — sentiment
+is computed once and never updated, so "analyzed" and "created" coincide by construction, but naming
+the column for what it means documents why the row exists rather than reusing an audit mechanism.
+
+**Aggregation reuses `NewsService.getNews`'s `limit`, not a new `window=7d` param.** No existing
+Orynix endpoint parses a duration string anywhere; inventing one here would be a second,
+inconsistent convention for one feature. `getNews` already returns the most-recent-`limit` articles
+ordered by `publishedAt desc`, so aggregation's scope follows the exact same
+`DEFAULT_LIMIT=20`/`MAX_LIMIT=50`/400-on-invalid rules the news endpoint already enforces, for free.
+
+**`MAX_ARTICLES_ANALYZED_PER_REQUEST = 10`**, a `SentimentService` companion constant deliberately
+smaller than news' `MAX_LIMIT = 50` — a sequential loop over the full 50 would mean a cold,
+never-analyzed symbol triggers up to 50 sequential Hugging Face calls inside one HTTP request (tens
+of seconds, roughly a sixth of the free tier's hourly budget in one shot). The smaller cap bounds
+each request and lets coverage warm up across repeat calls — later calls hit the cache for
+already-analyzed articles and only pay for the newest ones. `articleCount` in the aggregate response
+reflects articles that actually have a result, never overclaiming coverage. Analysis within one
+request is always sequential (`.map`), never concurrent — satisfies the "no request storms"
+requirement with no `CompletableFuture`/coroutine fan-out needed.
+
+**Aggregation math**: `positiveCount`/`negativeCount`/`neutralCount` partition `articleCount`;
+`averageScore` uses the three-arg `BigDecimal.divide(count, scale, roundingMode)` overload (a bare
+`.divide()` throws `ArithmeticException` on a non-terminating result, e.g. 3 articles → 1/3).
+`overallSentiment` thresholds are `±0.15` (`private const val`s, mirroring
+`SignalAnalysisService`'s documented-threshold style): since `score` ranges over `[-1, 1]`, 0.15
+means the positive-vs-negative probability mass must differ by at least 15 points before an
+aggregate is called non-neutral — wide enough that one borderline article doesn't tip a multi-article
+aggregate, narrow enough that genuinely one-sided news flow still registers. **Zero-article
+aggregation is pinned, not left open**: count=0, averageScore=0.0000, overallSentiment=NEUTRAL,
+HTTP 200 — extending Section 10's "empty news is a normal 200, not an error" rule one hop further.
+
+**Concurrency**: `SentimentService.persist` reuses the proven `REQUIRES_NEW` + flush + catch
+`DataIntegrityViolationException` pattern from `MarketDataService`/`NewsService`, with one necessary
+difference — since `NewsService.getNews` masks its race by re-querying its whole result set
+afterward, but a single-article lookup has no natural re-query, `persist`'s catch block explicitly
+re-reads the winning row instead of returning a result whose `id`/`analyzedAt` were never actually
+persisted.
+
+**`SentimentResponse` exposes `analyzer`/`model`** (meaningful ML provenance, and exactly what the
+unique constraint is keyed on — hiding them would make a re-analyzed article's historical rows
+indistinguishable) **but not the sentiment row's own `id`** (nothing addresses a sentiment row by
+its own id, only by article or symbol) — unlike `providerArticleId`/`fetchedAt` on the news side,
+which stay fully internal.
+
+**Fixed a latent bug while adding this feature's first `@PathVariable`**: `GET /api/v1/news` has
+always had no handler for `MethodArgumentTypeMismatchException` (thrown by Spring when a
+`@RequestParam`/`@PathVariable` can't be converted to its declared type, e.g. `limit=abc` or a
+malformed UUID path segment), so it fell into the generic catch-all and returned `500` instead of
+`400`. Sentiment's new `@PathVariable newsId: UUID` hits the identical failure mode on a malformed
+UUID, so the fix (one handler mapping it to `400`) was made here, with a regression test added to
+the pre-existing `NewsControllerTest`, not only to the new sentiment tests.
+
+**Provider test coverage is Hugging Face HTTP-level-free**, same call already made for
+`MassiveNewsProvider`/`MassiveMarketDataProvider`/`MassiveFundamentalDataProvider` (none of which
+have HTTP-level tests either — only fake-substituted integration tests). `HuggingFaceSentimentAnalyzer`'s
+score-normalization logic lives in a `companion object` function specifically so a pure, Spring-free
+test can call it directly with hand-built label/score fixtures, without needing
+MockWebServer/WireMock or a live Hugging Face call.
+
+**Configuration**: `HUGGING_API_KEY` (required, no default — a secret), `HUGGINGFACE_BASE_URL`
+(optional, defaults to `https://router.huggingface.co/hf-inference/models` — Hugging Face's 2025
+"Inference Providers" consolidation; verify this is still current if Hugging Face changes its
+routing again), and `HUGGINGFACE_MODEL` (optional, defaults to `ProsusAI/finbert`), bound via
+`HuggingFaceProperties` (`@ConfigurationProperties(prefix = "huggingface")`, registered through the
+existing `@ConfigurationPropertiesScan` — must not also be `@Component`, same `MassiveProperties`
+constructor-binding-conflict reason, see Section 3).
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): any AI/agent
+involvement, prediction, and trading recommendations derived from sentiment — this layer reports
+classified sentiment and a deterministic aggregate, nothing more.
+
+## 12. Package structure
 
 Root package: `com.cephCoding.orynix`.
 
@@ -683,6 +836,16 @@ com.cephCoding.orynix
     model/          NewsArticleEntity (table news_articles)
     repository/     NewsArticleRepository
     dto/            NewsArticleResponse, NewsResponse
+  sentiment/
+    controller/    SentimentController (maps under /api/v1/news — see Section 11)
+    service/       SentimentService (get-or-analyze + aggregation)
+    analyzer/       SentimentAnalyzer interface
+      huggingface/    HuggingFaceSentimentAnalyzer, HuggingFaceProperties
+        dto/           HuggingFaceSentimentRequest, HuggingFaceSentimentScore
+    domain/         Sentiment, AnalyzedSentiment, SentimentResult, SentimentAggregate
+    model/          NewsSentimentEntity (table news_sentiments)
+    repository/     NewsSentimentRepository
+    dto/            SentimentResponse, SentimentAggregateResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -702,14 +865,19 @@ provider hierarchy (`FundamentalDataProvider`/`MassiveFundamentalDataProvider`),
 of `MarketDataProvider`, because fetching a company profile is unrelated to fetching candles.
 `news/` has `domain/`+`provider/` (like `fundamentals/`, for the external-provider abstraction) and
 `model/`+`repository/` (like `market/`, since news is persisted) — combining two already-established
-patterns because it needs both, not a new one. Future features (`agents/`, `sentiment/`,
-`prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`, `websocket/`) should follow
-the base `controller/service/repository/model/dto` shape (adding
-`domain/`/`provider/`/`indicator/`/`rule/`-style subpackages only if they have the same kind of
-concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/`/`news/` had) and only be
-created when there is a concrete task for them — do not scaffold empty future packages ahead of time.
+patterns because it needs both, not a new one. `sentiment/` has the same `domain/`+`analyzer/` and
+`model/`+`repository/` combination as `news/`, for the same reason — but its interface subpackage is
+named `analyzer/` rather than `provider/`, since the project names subpackages after the abstraction
+they hold (compare `rule/` vs `indicator/`, two differently-named external-free abstractions over
+the same kind of input), and this one holds a `SentimentAnalyzer`, not a `*DataProvider`. Future
+features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
+`websocket/`) should follow the base `controller/service/repository/model/dto` shape (adding
+`domain/`/`provider/`/`analyzer/`/`indicator/`/`rule/`-style subpackages only if they have the same
+kind of concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/`/`news/`/`sentiment/`
+had) and only be created when there is a concrete task for them — do not scaffold empty future
+packages ahead of time.
 
-## 12. API conventions
+## 13. API conventions
 
 - All endpoints are versioned under `/api/v1/...`.
 - Controllers accept and return explicit request/response DTOs only — never JPA entities.
@@ -728,23 +896,28 @@ created when there is a concrete task for them — do not scaffold empty future 
   - `200` — successful GET/POST that doesn't create a resource (login, refresh, `/users/me`)
   - `201` — successful registration (resource created)
   - `204` — successful logout (no content)
-  - `400` — validation errors; also an invalid `limit` on `/api/v1/news`
-    (`InvalidNewsLimitException`)
+  - `400` — validation errors; also an invalid `limit` on `/api/v1/news`/`/api/v1/news/sentiment`
+    (`InvalidNewsLimitException`), and any malformed `@RequestParam`/`@PathVariable` that can't be
+    converted to its declared type — e.g. `limit=abc` or a malformed UUID in
+    `/api/v1/news/{newsId}/sentiment` (`MethodArgumentTypeMismatchException`)
   - `401` — invalid credentials, invalid/expired/revoked token, missing authentication
   - `404` — resource not found; also a fundamentals request for a symbol Massive has no ticker
-    record for (`CompanyNotFoundException`). A news request for a symbol with no articles is
-    **not** a 404 — it's a normal `200` with an empty `articles` array.
+    record for (`CompanyNotFoundException`), and a sentiment request for a well-formed but unknown
+    news article id (`NewsArticleNotFoundException`). A news request for a symbol with no articles,
+    or a sentiment aggregate for a symbol with no articles, is **not** a 404 — both are a normal
+    `200` with an empty `articles` array / a pinned neutral zero-state respectively.
   - `409` — duplicate email on registration
   - `422` — well-formed technical-analysis request with insufficient historical candle data to
     compute the requested indicators (`InsufficientCandleDataException`)
   - `500` — unexpected server error (never leaks a stack trace or internal detail)
-  - `502` — an external provider (Massive) request failed; the sanitized
-    `MarketDataProviderException` (market data), `FundamentalDataProviderException` (fundamentals),
-    or `NewsDataProviderException` (news) message is returned, never the upstream body or request URI
+  - `502` — an external provider request failed; the sanitized `MarketDataProviderException`
+    (market data), `FundamentalDataProviderException` (fundamentals), `NewsDataProviderException`
+    (news), or `SentimentAnalyzerException` (sentiment) message is returned, never the upstream body
+    or request URI
 - Authentication requirement per endpoint must be explicit in `SecurityConfig`, matched by exact
   method + path, not inferred from a prefix.
 
-## 13. Database conventions
+## 14. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
   database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
@@ -776,8 +949,17 @@ created when there is a concrete task for them — do not scaffold empty future 
   `market_data_candles`, a second index is justified here because the unique constraint's columns
   don't already serve the read query, which sorts by `published_at` while being keyed by
   `provider_article_id`.
+- `news_sentiments` has a unique constraint on `(news_article_id, analyzer, model)` (see Section 11)
+  and **no separate index** — unlike `news_articles`, this table's only two read patterns (a point
+  lookup by the full constraint, and a batch lookup for aggregation filtered the same way) are both
+  already served by the constraint's leftmost-prefix `news_article_id`. This depends on `symbol`
+  never being denormalized onto this table — re-check that assumption before adding a symbol column
+  or index. `NewsSentimentEntity` does not use `@CreatedDate`/`AuditingEntityListener` like every
+  other entity in this codebase — `analyzed_at` is set explicitly at construction instead, since
+  sentiment is computed once and never updated, so reusing the audit-timestamp mechanism would
+  obscure rather than clarify why the column exists.
 
-## 14. Development rules for Claude
+## 15. Development rules for Claude
 
 - Read this file before making changes.
 - Inspect the existing implementation before modifying it — don't assume; check.

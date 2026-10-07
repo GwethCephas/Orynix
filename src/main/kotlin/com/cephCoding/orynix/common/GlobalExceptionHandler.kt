@@ -10,7 +10,9 @@ import com.cephCoding.orynix.common.exception.InvalidSymbolException
 import com.cephCoding.orynix.common.exception.InvalidTimeframeException
 import com.cephCoding.orynix.common.exception.InvalidNewsLimitException
 import com.cephCoding.orynix.common.exception.MarketDataProviderException
+import com.cephCoding.orynix.common.exception.NewsArticleNotFoundException
 import com.cephCoding.orynix.common.exception.NewsDataProviderException
+import com.cephCoding.orynix.common.exception.SentimentAnalyzerException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -19,6 +21,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import java.util.NoSuchElementException
 
 @RestControllerAdvice
@@ -37,6 +40,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException::class)
     fun handleUnreadable(ex: HttpMessageNotReadableException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_REQUEST, "Malformed request body", request)
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun handleTypeMismatch(ex: MethodArgumentTypeMismatchException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, "Invalid request", request)
 
     @ExceptionHandler(EmailAlreadyExistsException::class)
     fun handleEmailExists(ex: EmailAlreadyExistsException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
@@ -77,6 +84,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(NewsDataProviderException::class)
     fun handleNewsDataProviderFailure(ex: NewsDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_GATEWAY, ex.message ?: "News data provider request failed", request)
+
+    @ExceptionHandler(NewsArticleNotFoundException::class)
+    fun handleNewsArticleNotFound(ex: NewsArticleNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "News article not found", request)
+
+    @ExceptionHandler(SentimentAnalyzerException::class)
+    fun handleSentimentAnalyzerFailure(ex: SentimentAnalyzerException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Sentiment analyzer request failed", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {
