@@ -8,7 +8,9 @@ import com.cephCoding.orynix.common.exception.InvalidRefreshTokenException
 import com.cephCoding.orynix.common.exception.InsufficientCandleDataException
 import com.cephCoding.orynix.common.exception.InvalidSymbolException
 import com.cephCoding.orynix.common.exception.InvalidTimeframeException
+import com.cephCoding.orynix.common.exception.InvalidNewsLimitException
 import com.cephCoding.orynix.common.exception.MarketDataProviderException
+import com.cephCoding.orynix.common.exception.NewsDataProviderException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -67,6 +69,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(InsufficientCandleDataException::class)
     fun handleInsufficientCandleData(ex: InsufficientCandleDataException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.UNPROCESSABLE_ENTITY, ex.message ?: "Insufficient candle data", request)
+
+    @ExceptionHandler(InvalidNewsLimitException::class)
+    fun handleInvalidNewsLimit(ex: InvalidNewsLimitException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(NewsDataProviderException::class)
+    fun handleNewsDataProviderFailure(ex: NewsDataProviderException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_GATEWAY, ex.message ?: "News data provider request failed", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {

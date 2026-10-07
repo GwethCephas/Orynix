@@ -38,7 +38,8 @@ Android / Web
 - Market data — **implemented** (historical daily OHLCV candles via Massive, see Section 6)
 - Technical analysis — **implemented** (on-demand indicators computed from candles, see Section 7)
 - AI agents — not implemented
-- News analysis — not implemented
+- News analysis — **implemented** (persisted, symbol-scoped news retrieval via Massive, see
+  Section 10)
 - Sentiment analysis — not implemented
 - Prediction — not implemented
 - Risk management — not implemented
@@ -188,7 +189,7 @@ remove that reset.
 
 - The backend is the single source of truth. Android and web clients communicate only through
   the backend API.
-- Use feature-oriented package organization (see Section 10). Do not organize by technical layer
+- Use feature-oriented package organization (see Section 11). Do not organize by technical layer
   at the top level (no top-level `controllers/`, `services/`, `repositories/`).
 - Prefer simple designs over unnecessary abstractions. Don't add an interface for a class with
   one implementation. Don't add a generic/base class until there are at least two concrete needs
@@ -242,7 +243,7 @@ prefix — requires authentication. Do not collapse this into a `/api/v1/auth/**
 would make logout publicly callable without a token.
 
 Unauthenticated/forbidden requests to protected endpoints get the same JSON error shape as
-everything else (see Section 11) via a custom `AuthenticationEntryPoint` /
+everything else (see Section 12) via a custom `AuthenticationEntryPoint` /
 `AccessDeniedHandler` — not Spring Security's default body.
 
 ## 6. Market data architecture
@@ -279,15 +280,28 @@ logging.
 `timeframe` — no `from`/`to` params yet. `MarketDataService` always requests the last 365 days
 (ending today) from the provider. Adding optional date-range params is future work, not yet done.
 
-**Dedup strategy**: `MarketDataService.getDailyCandles` fetches from the provider, queries
-`MarketDataCandleRepository.findBySymbolAndTimeframeAndTimestampIn` for timestamps already
-persisted for that symbol/timeframe, filters the fetched list down to genuinely new candles before
-`saveAll`, and returns the full fetched list (not just what was newly inserted) either way. This
-makes re-fetching the same window idempotent — no duplicate rows — without relying on catching a
-unique-constraint violation per row. The table's unique constraint on
-`(symbol, timeframe, timestamp)` is the backstop, not the primary mechanism. Symbol input is
-trimmed and uppercased before both the provider call and the dedup check, so `aapl` and `AAPL`
-can't produce two rows.
+**Dedup strategy**: `MarketDataService.getDailyCandles` fetches from the provider, then calls
+`persistNewCandles` to query `MarketDataCandleRepository.findBySymbolAndTimeframeAndTimestampIn`
+for timestamps already persisted for that symbol/timeframe, filter the fetched list down to
+genuinely new candles, and `saveAllAndFlush` them, before returning the full fetched list (not just
+what was newly inserted) either way. Symbol input is trimmed and uppercased before both the
+provider call and the dedup check, so `aapl` and `AAPL` can't produce two rows.
+
+**Concurrency fix (race condition, fixed after being reproduced live)**: the dedup check above is a
+read-then-write race — on a symbol/timeframe's first-ever fetch, two concurrent requests can each
+see "no existing candles," then both attempt to insert the same rows and collide on the
+`(symbol, timeframe, timestamp)` unique constraint. This was reproduced with plain concurrent `curl`
+requests against a never-fetched symbol and surfaced as an uncaught 500. Fixed by moving the persist
+step into `persistNewCandles`, a separate method with
+`@Transactional(propagation = Propagation.REQUIRES_NEW)`, that catches the resulting
+`DataIntegrityViolationException` from `saveAllAndFlush` (flushed eagerly specifically so the
+violation surfaces inside the `try`, not at commit time after the method has returned) — the losing
+request's candles are already durably persisted by the winner, so there's nothing to recover.
+`getDailyCandles` itself carries no `@Transactional` annotation; only the isolated persist step
+does. A regression test in `MarketDataServiceTest` races 8 threads against a brand-new symbol and
+confirms neither an exception nor a duplicate row results. **This same pattern is reused verbatim
+in `NewsService.persistNewArticles`** (see Section 10) — apply it proactively to any future
+provider-backed persist-after-fetch flow rather than waiting to rediscover the race.
 
 **Configuration**: `MASSIVE_API_KEY` (required, no default — a secret) and `MASSIVE_BASE_URL`
 (optional, defaults to `https://api.massive.com`), bound via `MassiveProperties`
@@ -504,7 +518,107 @@ REST DTOs with the same `companion object { from(domain) }` idiom used everywher
 profitability, growth, balance-sheet, and cash-flow categories (blocked by entitlement, see
 above), any AI/LLM involvement, and any BUY/SELL recommendation or scoring derived from this data.
 
-## 10. Package structure
+## 10. News intelligence architecture
+
+Implemented: provider-independent, persisted, symbol-scoped financial news, sourced from
+**Massive** (`GET /v2/reference/news`), exposed via `GET /api/v1/news?symbol=AAPL&limit=20`
+(protected — falls through to `anyRequest().authenticated()` like every other non-auth endpoint).
+This is **Phase 1 only**: normalized news retrieval and storage, nothing more.
+
+```
+Massive -> NewsDataProvider -> NewsService -> REST API
+```
+
+**Verified against Massive's real docs, not assumed**: the news endpoint is documented as
+"Included in all Stocks plans" — unlike the deprecated financials endpoints (Section 9), it is
+**not** entitlement-blocked under the current plan.
+
+**Fetch strategy deliberately deviates from market-data's provider-first pattern.** Market data
+(Section 6) always re-calls Massive fresh on every request; dedup only prevents duplicate rows, not
+duplicate API calls. Doing the same for news would call Massive on every dashboard load across
+multiple endpoints — exactly the pattern that produced real Massive rate-limit (502) responses
+during this feature's own verification. Instead, `NewsService.getNews` is **DB-first with a
+15-minute freshness window**: it queries persisted articles for the symbol first, and only calls
+`NewsDataProvider.fetchNews` when there are fewer than `limit` persisted articles or the newest
+persisted row's `createdAt` is older than `FRESHNESS_WINDOW` (`Duration.ofMinutes(15)`, a
+`private val` in `NewsService`'s companion object — a `Duration` isn't a compile-time constant, so
+unlike the `private const val` thresholds in `SignalAnalysisService`/`TechnicalAnalysisService`,
+this one is a plain `private val`). Sparse symbols (fewer articles ever published than `limit`)
+always re-check the provider — safe, since rate-limit exposure is about repeatedly-requested
+*popular* symbols, which this heuristic directly addresses. After persisting, the response is
+built from a **fresh re-query of the persisted set**, not the raw fetched list — this guarantees
+every returned article has a real `id` and correctly backfills from older persisted articles if the
+provider returns fewer than `limit` new ones on a given call.
+
+**Reuses the Section 6 concurrency fix proactively**: `NewsService.persistNewArticles` is a
+`@Transactional(propagation = Propagation.REQUIRES_NEW)` method that dedup-queries by
+`(symbol, providerArticleId)`, `saveAllAndFlush`s the new rows, and catches
+`DataIntegrityViolationException` — the exact pattern proven in `MarketDataService.persistNewCandles`
+after that race condition was found and fixed, applied here from the start instead of waiting to
+rediscover the same bug.
+
+**Per-symbol storage, not globally deduped across symbols.** Massive's response includes a
+`tickers` array (an article can cover multiple symbols), but it isn't captured — a row is tagged
+with whatever symbol the request was scoped to, mirroring `market_data_candles`'s existing
+per-(symbol, timeframe, timestamp) storage rather than introducing a many-to-many article↔symbol
+join table. Unique identity is `(symbol, provider_article_id)`.
+
+**`id` (Massive's), `title`, and `published_utc` are treated as the structurally-required trio** —
+`MassiveNewsProvider` skips (never fabricates) any article missing one of these. This also means
+`provider_article_id` can be a plain `NOT NULL` column with a plain `UNIQUE` constraint (matching
+`market_data_candles`'s style) instead of a nullable-aware partial index.
+
+**`fetchedAt` is not a separate column.** It maps onto `NewsArticleEntity`'s standard
+`@CreatedDate created_at` — for this feature, "when fetched" and "when first persisted" are the
+same moment, and the project's convention is a single auditing `created_at`, not bespoke
+event-timestamp columns. `published_at` is always the provider's own `published_utc` and is never
+rewritten, preserving point-in-time integrity for any future historical/backtesting use.
+
+**Discovery worth flagging for a future sentiment phase**: Massive's news response already includes
+a per-ticker `insights: [{ticker, sentiment, sentiment_reasoning}]` field — free, no extra API call.
+Phase 1 deliberately does **not** capture or expose this (`tickers`/`keywords`/`insights`/`amp_url`/
+`image_url` are not modeled in `MassiveNewsArticle` at all, matching the "only fields Orynix
+actually uses" precedent from `MassiveBar`/`MassiveTickerDetails`). It's a candidate input for a
+future `SentimentAnalyzer`, not acted on now — do not start consuming it without a concrete task.
+
+**Layering**: `news/provider/massive/dto/` holds the raw Massive JSON shape
+(`MassiveNewsResponse`/`MassiveNewsArticle`/`MassiveNewsPublisher`, snake_case keys like
+`article_url`/`published_utc` mapped via `@JsonProperty`, see Section 3's annotations exception).
+`news/domain/` holds `NewsArticle` (provider-agnostic, with a **nullable `id: UUID?`** — `null`
+when freshly mapped from the provider pre-persistence, populated when mapped back from a persisted
+`NewsArticleEntity`; this is a deliberate one-class deviation from `Candle`'s precedent of carrying
+no id at all, because articles need to be individually addressable in the REST response and candles
+don't) and `NewsResult` (envelope: `symbol` + `articles`, the same idiom `FundamentalAnalysisResult`
+uses for `symbol` + `company`). `news/model/` holds `NewsArticleEntity` (table `news_articles`,
+reuses `MarketDataCandle`'s exact entity shape plus a `toDomain()` method). `news/repository/` holds
+`NewsArticleRepository` with `findBySymbolOrderByPublishedAtDesc(symbol, pageable)` — `Pageable` is
+used purely as an internal LIMIT mechanism, not exposed as a pagination API — and
+`findBySymbolAndProviderArticleIdIn` for the dedup check. `news/dto/` mirrors this into REST DTOs
+(`NewsArticleResponse`/`NewsResponse`) with the established `companion object { from(domain) }`
+idiom; `providerArticleId` and `fetchedAt` are never exposed (provider-specific/internal-only).
+
+**No "not found" exception.** An unknown or obscure symbol with zero news is a normal, empty
+`articles: []` response — not an error — unlike fundamentals' `CompanyNotFoundException`, because
+news isn't a single required resource. `InvalidNewsLimitException` (400) guards
+`limit ∉ [1, 50]` (default `20` when omitted) via explicit validation that throws, not silent
+clamping, matching `InvalidSymbolException`/`InvalidTimeframeException`'s existing convention.
+`NewsDataProviderException` (502) follows the same sanitized-provider-failure convention as
+`MarketDataProviderException`/`FundamentalDataProviderException`.
+
+**Provider test coverage is DTO-deserialization-only** (plain `ObjectMapper.readValue` tests on
+sample JSON, no Spring context, no HTTP mocking) — a deliberate choice matching the fact that
+`MassiveMarketDataProvider`/`MassiveFundamentalDataProvider` have zero direct tests either; only
+fake-provider-substituted service/controller integration tests exist for those. Introducing
+MockWebServer/WireMock for news alone would be an orphaned, inconsistent testing pattern. `FakeNewsProvider`
+additionally tracks `callCount` (not present on the other fakes) specifically to assert the
+freshness window actually skips the provider on a repeat call — the first test of its kind to need
+this.
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): sentiment analysis
+(see the `insights` discovery above), any AI/LLM involvement, any news endpoint beyond
+`GET .../news`, and any prediction/recommendation derived from news content.
+
+## 11. Package structure
 
 Root package: `com.cephCoding.orynix`.
 
@@ -559,6 +673,16 @@ com.cephCoding.orynix
         dto/          MassiveTickerDetailsResponse, MassiveTickerDetails (raw Massive JSON shape)
     domain/         CompanyProfile, FundamentalAnalysisResult
     dto/            CompanyProfileResponse, FundamentalAnalysisResponse
+  news/
+    controller/    NewsController
+    service/       NewsService (DB-first fetch + freshness window + dedup + persist)
+    provider/       NewsDataProvider interface
+      massive/       MassiveNewsProvider
+        dto/          MassiveNewsResponse, MassiveNewsArticle, MassiveNewsPublisher
+    domain/         NewsArticle, NewsResult
+    model/          NewsArticleEntity (table news_articles)
+    repository/     NewsArticleRepository
+    dto/            NewsArticleResponse, NewsResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -576,13 +700,16 @@ already-computed indicators, not indicator calculations themselves. `fundamental
 `domain/` and `provider/` subpackages for the same reason `market/` does — a second, independent
 provider hierarchy (`FundamentalDataProvider`/`MassiveFundamentalDataProvider`), not an extension
 of `MarketDataProvider`, because fetching a company profile is unrelated to fetching candles.
-Future features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
-`websocket/`) should follow the base `controller/service/repository/model/dto` shape (adding
+`news/` has `domain/`+`provider/` (like `fundamentals/`, for the external-provider abstraction) and
+`model/`+`repository/` (like `market/`, since news is persisted) — combining two already-established
+patterns because it needs both, not a new one. Future features (`agents/`, `sentiment/`,
+`prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`, `websocket/`) should follow
+the base `controller/service/repository/model/dto` shape (adding
 `domain/`/`provider/`/`indicator/`/`rule/`-style subpackages only if they have the same kind of
-concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/` had) and only be created
-when there is a concrete task for them — do not scaffold empty future packages ahead of time.
+concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/`/`news/` had) and only be
+created when there is a concrete task for them — do not scaffold empty future packages ahead of time.
 
-## 11. API conventions
+## 12. API conventions
 
 - All endpoints are versioned under `/api/v1/...`.
 - Controllers accept and return explicit request/response DTOs only — never JPA entities.
@@ -601,21 +728,23 @@ when there is a concrete task for them — do not scaffold empty future packages
   - `200` — successful GET/POST that doesn't create a resource (login, refresh, `/users/me`)
   - `201` — successful registration (resource created)
   - `204` — successful logout (no content)
-  - `400` — validation errors
+  - `400` — validation errors; also an invalid `limit` on `/api/v1/news`
+    (`InvalidNewsLimitException`)
   - `401` — invalid credentials, invalid/expired/revoked token, missing authentication
   - `404` — resource not found; also a fundamentals request for a symbol Massive has no ticker
-    record for (`CompanyNotFoundException`)
+    record for (`CompanyNotFoundException`). A news request for a symbol with no articles is
+    **not** a 404 — it's a normal `200` with an empty `articles` array.
   - `409` — duplicate email on registration
   - `422` — well-formed technical-analysis request with insufficient historical candle data to
     compute the requested indicators (`InsufficientCandleDataException`)
   - `500` — unexpected server error (never leaks a stack trace or internal detail)
   - `502` — an external provider (Massive) request failed; the sanitized
-    `MarketDataProviderException` (market data) or `FundamentalDataProviderException`
-    (fundamentals) message is returned, never the upstream body or request URI
+    `MarketDataProviderException` (market data), `FundamentalDataProviderException` (fundamentals),
+    or `NewsDataProviderException` (news) message is returned, never the upstream body or request URI
 - Authentication requirement per endpoint must be explicit in `SecurityConfig`, matched by exact
   method + path, not inferred from a prefix.
 
-## 12. Database conventions
+## 13. Database conventions
 
 - Primary keys are `UUID`, assigned application-side (`UUID.randomUUID()`), not
   database-generated. Because the `@Id` is always non-null, Spring Data JPA's default
@@ -642,8 +771,13 @@ when there is a concrete task for them — do not scaffold empty future packages
   query pattern, so no separate index was added. OHLCV columns are `NUMERIC`, not `DOUBLE
   PRECISION`/float — see the "never use `Double` for money" instinct applied to volume too, since
   Massive's `v` field is a JSON number, not guaranteed to be integral.
+- `news_articles` has a unique constraint on `(symbol, provider_article_id)` (the dedup identity,
+  see Section 10) plus a separate composite index on `(symbol, published_at)` — unlike
+  `market_data_candles`, a second index is justified here because the unique constraint's columns
+  don't already serve the read query, which sorts by `published_at` while being keyed by
+  `provider_article_id`.
 
-## 13. Development rules for Claude
+## 14. Development rules for Claude
 
 - Read this file before making changes.
 - Inspect the existing implementation before modifying it — don't assume; check.
