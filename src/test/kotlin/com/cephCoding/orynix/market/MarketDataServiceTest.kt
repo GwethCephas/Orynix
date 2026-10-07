@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MarketDataServiceTest : AbstractIntegrationTest() {
 
@@ -41,5 +44,47 @@ class MarketDataServiceTest : AbstractIntegrationTest() {
         assert(first.size == 1)
         assert(second.size == 1)
         assert(countAfterFirst == countAfterSecond)
+    }
+
+    @Test
+    fun `concurrent first-time fetches of a brand-new symbol do not throw or duplicate rows`() {
+        val candles = (1..30).map { day ->
+            Candle(
+                symbol = "RACE",
+                timeframe = CandleTimeframe.DAILY,
+                timestamp = Instant.parse("2026-01-01T00:00:00Z").plusSeconds(day * 86400L),
+                open = BigDecimal("100.00"),
+                high = BigDecimal("101.00"),
+                low = BigDecimal("99.00"),
+                close = BigDecimal("100.50"),
+                volume = BigDecimal("1000"),
+            )
+        }
+        fakeMarketDataProvider.candlesToReturn = candles
+
+        val concurrency = 8
+        val executor = Executors.newFixedThreadPool(concurrency)
+        val readyLatch = CountDownLatch(concurrency)
+        val startLatch = CountDownLatch(1)
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+
+        val futures = (1..concurrency).map {
+            executor.submit {
+                readyLatch.countDown()
+                startLatch.await()
+                try {
+                    marketDataService.getDailyCandles("race", "1d")
+                } catch (ex: Throwable) {
+                    errors.add(ex)
+                }
+            }
+        }
+        readyLatch.await()
+        startLatch.countDown()
+        futures.forEach { it.get(30, TimeUnit.SECONDS) }
+        executor.shutdown()
+
+        assert(errors.isEmpty()) { "Concurrent getDailyCandles calls threw: $errors" }
+        assert(repository.findBySymbolAndTimeframeAndTimestampIn("RACE", "1d", candles.map { it.timestamp }).size == candles.size)
     }
 }
