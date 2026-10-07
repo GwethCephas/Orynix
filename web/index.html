@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Orynix Auth Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orynix</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,6 +26,38 @@
     <p>Not logged in.</p>
   </div>
 
-  <script src="app.js" defer></script>
+  <div id="dashboard" hidden>
+    <h1>Orynix</h1>
+
+    <form id="symbolForm" class="symbol-form">
+      <input type="text" id="symbolInput" placeholder="AAPL" autocomplete="off">
+      <button type="submit">Load</button>
+      <button type="button" id="refreshBtn">Refresh</button>
+    </form>
+
+    <div id="assetHeader" class="card asset-header"></div>
+
+    <div class="card chart-card">
+      <p id="priceChartStatus" class="section-status" hidden></p>
+      <canvas id="priceChart" class="price-chart"></canvas>
+    </div>
+
+    <section class="card">
+      <h2>Technical Analysis</h2>
+      <div id="technicalAnalysis"></div>
+    </section>
+
+    <section class="card">
+      <h2>Signals</h2>
+      <div id="signals"></div>
+    </section>
+
+    <section class="card">
+      <h2>Fundamentals</h2>
+      <div id="fundamentals"></div>
+    </section>
+  </div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>
