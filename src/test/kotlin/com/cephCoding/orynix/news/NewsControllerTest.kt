@@ -59,6 +59,17 @@ class NewsControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `malformed limit is rejected with 400, not 500`() {
+        val auth = register("news-malformedlimit@example.com")
+
+        mockMvc.get("/api/v1/news") {
+            param("symbol", "AAPL")
+            param("limit", "abc")
+            header("Authorization", "Bearer ${auth.accessToken}")
+        }.andExpect { status { isBadRequest() } }
+    }
+
+    @Test
     fun `empty results return 200 with an empty articles array`() {
         val auth = register("news-empty@example.com")
         fakeNewsProvider.articlesToReturn = emptyList()

@@ -18,6 +18,7 @@ import tools.jackson.databind.ObjectMapper
     MarketDataTestConfiguration::class,
     FundamentalDataTestConfiguration::class,
     NewsDataTestConfiguration::class,
+    SentimentTestConfiguration::class,
 )
 abstract class AbstractIntegrationTest {
 
@@ -36,6 +37,9 @@ abstract class AbstractIntegrationTest {
     @Autowired
     protected lateinit var fakeNewsProvider: FakeNewsProvider
 
+    @Autowired
+    protected lateinit var fakeSentimentAnalyzer: FakeSentimentAnalyzer
+
     @AfterEach
     fun resetFakeMarketDataProvider() {
         fakeMarketDataProvider.reset()
@@ -49,6 +53,11 @@ abstract class AbstractIntegrationTest {
     @AfterEach
     fun resetFakeNewsProvider() {
         fakeNewsProvider.reset()
+    }
+
+    @AfterEach
+    fun resetFakeSentimentAnalyzer() {
+        fakeSentimentAnalyzer.reset()
     }
 
     protected fun register(email: String, password: String = "password123"): AuthResponse {
