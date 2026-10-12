@@ -7,57 +7,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Orynix Auth Test</h1>
-
-  <div class="form">
-    <input type="email" id="email" placeholder="Email">
-    <input type="password" id="password" placeholder="Password">
-    <div class="buttons">
-      <button id="registerBtn">Register</button>
-      <button id="loginBtn">Login</button>
-      <button id="logoutBtn">Logout</button>
-    </div>
-  </div>
-
-  <p id="message"></p>
-
-  <div id="userInfo" class="user-info">
-    <h2>Current user</h2>
-    <p>Not logged in.</p>
-  </div>
-
-  <div id="dashboard" hidden>
-    <h1>Orynix</h1>
-
-    <form id="symbolForm" class="symbol-form">
-      <input type="text" id="symbolInput" placeholder="AAPL" autocomplete="off">
-      <button type="submit">Load</button>
-      <button type="button" id="refreshBtn">Refresh</button>
-    </form>
-
-    <div id="assetHeader" class="card asset-header"></div>
-
-    <div class="card chart-card">
-      <p id="priceChartStatus" class="section-status" hidden></p>
-      <canvas id="priceChart" class="price-chart"></canvas>
-    </div>
-
-    <section class="card">
-      <h2>Technical Analysis</h2>
-      <div id="technicalAnalysis"></div>
-    </section>
-
-    <section class="card">
-      <h2>Signals</h2>
-      <div id="signals"></div>
-    </section>
-
-    <section class="card">
-      <h2>Fundamentals</h2>
-      <div id="fundamentals"></div>
-    </section>
-  </div>
-
+  <div id="app-root"></div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

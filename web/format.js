@@ -69,6 +69,39 @@ export function formatDate(timestamp) {
   return new Date(timestamp).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+export function formatDateTime(timestamp) {
+  if (!timestamp) {
+    return "N/A";
+  }
+  return new Date(timestamp).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function formatRelativeTime(timestamp) {
+  if (!timestamp) {
+    return "N/A";
+  }
+  const then = new Date(timestamp).getTime();
+  if (Number.isNaN(then)) {
+    return "N/A";
+  }
+  const diffMs = Date.now() - then;
+  const diffMinutes = Math.round(diffMs / 60_000);
+
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return formatDate(timestamp);
+}
+
 export function classifySignalColor(state) {
   if (!state) {
     return "neutral";
@@ -90,4 +123,54 @@ export function humanizeEnum(value) {
     .split("_")
     .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
     .join(" ");
+}
+
+const HTML_ESCAPES = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+export function escapeHtml(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+export function isSafeHttpUrl(value) {
+  if (!value || typeof value !== "string") {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const SENTIMENT_COLOR = {
+  POSITIVE: "positive",
+  NEGATIVE: "negative",
+  NEUTRAL: "neutral",
+};
+
+export function classifySentimentColor(sentiment) {
+  return SENTIMENT_COLOR[sentiment] || "neutral";
+}
+
+export function formatSentimentScore(score) {
+  if (score === null || score === undefined || Number.isNaN(Number(score))) {
+    return "N/A";
+  }
+  const num = Number(score);
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${num.toFixed(2)}`;
+}
+
+export function isValidSymbol(symbol) {
+  return typeof symbol === "string" && /^[A-Z.]{1,10}$/.test(symbol);
 }
