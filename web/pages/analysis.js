@@ -1,7 +1,8 @@
-import { getCandles, getTechnicalAnalysis } from "../api.js";
+import { getCandles, getMarketIntelligence } from "../api.js";
 import { getCurrentSymbol, withCache, invalidateCached } from "../state.js";
 import { createSectionState, loadInto, renderStateBlock } from "../components/stateBlock.js";
-import { deriveAssetHeader, formatCurrency, formatNumber, formatPercent, formatDate, escapeHtml } from "../format.js";
+import { renderContextSection } from "../components/contextSection.js";
+import { deriveAssetHeader, formatCurrency, formatNumber, formatPercent, formatDate, formatDateTime, escapeHtml } from "../format.js";
 import { initChart, setChartCandles, setChartRange, RANGE_OPTIONS } from "../chart.js";
 
 const TA_GROUPS = [
@@ -41,7 +42,7 @@ const TA_GROUPS = [
 ];
 
 const CANDLES_ENDPOINT = "candles";
-const TA_ENDPOINT = "technical-analysis";
+const MARKET_INTELLIGENCE_ENDPOINT = "market-intelligence";
 
 export function mount(container) {
   const symbol = getCurrentSymbol();
@@ -53,7 +54,7 @@ export function mount(container) {
 
   let alive = true;
   const candlesSection = { value: createSectionState() };
-  const taSection = { value: createSectionState() };
+  const contextSection = { value: createSectionState() };
 
   container.innerHTML = `
     <div class="page analysis-page">
@@ -72,7 +73,10 @@ export function mount(container) {
       </section>
 
       <section class="card">
-        <h2>Technical Analysis</h2>
+        <div class="section-header">
+          <h2>Technical Analysis</h2>
+          <span class="section-asof" id="taAsOf"></span>
+        </div>
         <div id="technicalAnalysis"></div>
       </section>
     </div>`;
@@ -82,6 +86,7 @@ export function mount(container) {
   const canvas = container.querySelector("#priceChart");
   const tooltipEl = container.querySelector("#chartTooltip");
   const taEl = container.querySelector("#technicalAnalysis");
+  const taAsOfEl = container.querySelector("#taAsOf");
   const rangeControlsEl = container.querySelector("#rangeControls");
   const refreshBtn = container.querySelector("#refreshBtn");
 
@@ -134,19 +139,25 @@ export function mount(container) {
   }
 
   function renderTa() {
-    renderStateBlock(taEl, taSection.value, {
+    taAsOfEl.textContent = "";
+    renderStateBlock(taEl, contextSection.value, {
       loadingLines: 4,
-      onRetry: () => loadTa(true),
-      renderContent: (data) => {
-        taEl.innerHTML = TA_GROUPS.map(
-          (group) => `
-            <div class="indicator-group">
-              <h3>${group.title}</h3>
-              ${group.rows
-                .map(([label, getValue]) => `<div class="indicator-row"><span>${label}</span><span>${getValue(data)}</span></div>`)
-                .join("")}
-            </div>`
-        ).join("");
+      onRetry: () => loadContext(true),
+      renderContent: (context) => {
+        taAsOfEl.textContent = `As of ${formatDateTime(context.asOf)}`;
+        renderContextSection(taEl, context.technicalAnalysis, {
+          renderContent: (data) => {
+            taEl.innerHTML = TA_GROUPS.map(
+              (group) => `
+                <div class="indicator-group">
+                  <h3>${group.title}</h3>
+                  ${group.rows
+                    .map(([label, getValue]) => `<div class="indicator-row"><span>${label}</span><span>${getValue(data)}</span></div>`)
+                    .join("")}
+                </div>`
+            ).join("");
+          },
+        });
       },
     });
   }
@@ -163,19 +174,21 @@ export function mount(container) {
     await loadInto(candlesSection, renderAll, () => withCache(symbol, CANDLES_ENDPOINT, () => getCandles(symbol)));
   }
 
-  async function loadTa(force) {
-    if (force) invalidateCached(symbol, TA_ENDPOINT);
-    await loadInto(taSection, renderAll, () => withCache(symbol, TA_ENDPOINT, () => getTechnicalAnalysis(symbol)));
+  async function loadContext(force) {
+    if (force) invalidateCached(symbol, MARKET_INTELLIGENCE_ENDPOINT);
+    await loadInto(contextSection, renderAll, () =>
+      withCache(symbol, MARKET_INTELLIGENCE_ENDPOINT, () => getMarketIntelligence(symbol))
+    );
   }
 
   refreshBtn.addEventListener("click", () => {
     loadCandles(true);
-    loadTa(true);
+    loadContext(true);
   });
 
   renderAll();
   loadCandles(false);
-  loadTa(false);
+  loadContext(false);
 
   return () => {
     alive = false;

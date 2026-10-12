@@ -1,13 +1,12 @@
-import { getNews, getSentimentAggregate } from "../api.js";
+import { getMarketIntelligence } from "../api.js";
 import { getCurrentSymbol, withCache, invalidateCached } from "../state.js";
 import { createSectionState, loadInto, renderStateBlock } from "../components/stateBlock.js";
-import { escapeHtml } from "../format.js";
+import { renderContextSection } from "../components/contextSection.js";
+import { formatDateTime, escapeHtml } from "../format.js";
 import { newsItemHtml, wireNewsItemSentiment } from "../components/newsItem.js";
 import { sentimentPanelHtml } from "../components/sentimentPanel.js";
 
-const NEWS_ENDPOINT = "news";
-const SENTIMENT_AGGREGATE_ENDPOINT = "sentiment-aggregate";
-const NEWS_LIMIT = 20;
+const MARKET_INTELLIGENCE_ENDPOINT = "market-intelligence";
 
 export function mount(container) {
   const symbol = getCurrentSymbol();
@@ -17,8 +16,7 @@ export function mount(container) {
   }
 
   let alive = true;
-  const newsSection = { value: createSectionState() };
-  const sentimentSection = { value: createSectionState() };
+  const contextSection = { value: createSectionState() };
 
   container.innerHTML = `
     <div class="page news-page">
@@ -31,62 +29,58 @@ export function mount(container) {
           <h2>Recent News</h2>
           <button type="button" class="refresh-btn" id="refreshBtn">Refresh</button>
         </div>
+        <span class="section-asof" id="newsAsOf"></span>
         <div id="newsContent"></div>
       </section>
     </div>`;
 
   const sentimentEl = container.querySelector("#sentimentContent");
   const newsEl = container.querySelector("#newsContent");
+  const asOfEl = container.querySelector("#newsAsOf");
   const refreshBtn = container.querySelector("#refreshBtn");
 
-  function renderSentiment() {
+  function render() {
     if (!alive) return;
-    renderStateBlock(sentimentEl, sentimentSection.value, {
+    asOfEl.textContent = "";
+
+    renderStateBlock(sentimentEl, contextSection.value, {
       loadingLines: 3,
-      onRetry: () => loadSentiment(true),
-      renderContent: (aggregate) => {
-        sentimentEl.innerHTML = sentimentPanelHtml(aggregate);
+      onRetry: () => load(true),
+      renderContent: (context) => {
+        renderContextSection(sentimentEl, context.sentiment, {
+          renderContent: (aggregate) => {
+            sentimentEl.innerHTML = sentimentPanelHtml(aggregate);
+          },
+        });
       },
     });
-  }
 
-  function renderNews() {
-    if (!alive) return;
-    renderStateBlock(newsEl, newsSection.value, {
+    renderStateBlock(newsEl, contextSection.value, {
       loadingLines: 6,
-      onRetry: () => loadNews(true),
-      renderContent: (result) => {
-        if (!result.articles.length) {
-          newsEl.innerHTML = `<p class="section-status">No recent news found for this symbol.</p>`;
-          return;
-        }
-        newsEl.innerHTML = `<div class="news-list">${result.articles.map(newsItemHtml).join("")}</div>`;
-        wireNewsItemSentiment(newsEl);
+      onRetry: () => load(true),
+      renderContent: (context) => {
+        asOfEl.textContent = `As of ${formatDateTime(context.asOf)}`;
+        renderContextSection(newsEl, context.news, {
+          renderContent: (result) => {
+            newsEl.innerHTML = `<div class="news-list">${result.articles.map(newsItemHtml).join("")}</div>`;
+            wireNewsItemSentiment(newsEl);
+          },
+        });
       },
     });
   }
 
-  async function loadNews(force) {
-    if (force) invalidateCached(symbol, NEWS_ENDPOINT);
-    await loadInto(newsSection, renderNews, () => withCache(symbol, NEWS_ENDPOINT, () => getNews(symbol, NEWS_LIMIT)));
-  }
-
-  async function loadSentiment(force) {
-    if (force) invalidateCached(symbol, SENTIMENT_AGGREGATE_ENDPOINT);
-    await loadInto(sentimentSection, renderSentiment, () =>
-      withCache(symbol, SENTIMENT_AGGREGATE_ENDPOINT, () => getSentimentAggregate(symbol, NEWS_LIMIT))
+  async function load(force) {
+    if (force) invalidateCached(symbol, MARKET_INTELLIGENCE_ENDPOINT);
+    await loadInto(contextSection, render, () =>
+      withCache(symbol, MARKET_INTELLIGENCE_ENDPOINT, () => getMarketIntelligence(symbol))
     );
   }
 
-  refreshBtn.addEventListener("click", () => {
-    loadNews(true);
-    loadSentiment(true);
-  });
+  refreshBtn.addEventListener("click", () => load(true));
 
-  renderSentiment();
-  renderNews();
-  loadSentiment(false);
-  loadNews(false);
+  render();
+  load(false);
 
   return () => {
     alive = false;

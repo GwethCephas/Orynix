@@ -46,6 +46,8 @@ Android / Web
 - Risk management — not implemented
 - Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8)
 - Fundamentals — **implemented** (on-demand company information only via Massive, see Section 9)
+- Market Intelligence Context — **implemented** (deterministic orchestration of the six capabilities
+  above into one per-symbol snapshot with per-section partial-failure handling, see Section 17)
 - Portfolio — not implemented
 - Backtesting — not implemented
 - Paper trading — not implemented
@@ -846,6 +848,13 @@ com.cephCoding.orynix
     model/          NewsSentimentEntity (table news_sentiments)
     repository/     NewsSentimentRepository
     dto/            SentimentResponse, SentimentAggregateResponse
+  marketintelligence/
+    controller/    MarketIntelligenceController
+    service/       MarketIntelligenceService (orchestrates the six services above)
+    domain/         ContextSection, ContextSectionStatus, MarketDataSummary,
+                     MarketIntelligenceContext
+    dto/            ContextSectionResponse, MarketDataSummaryResponse,
+                     MarketIntelligenceContextResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -869,7 +878,12 @@ patterns because it needs both, not a new one. `sentiment/` has the same `domain
 `model/`+`repository/` combination as `news/`, for the same reason — but its interface subpackage is
 named `analyzer/` rather than `provider/`, since the project names subpackages after the abstraction
 they hold (compare `rule/` vs `indicator/`, two differently-named external-free abstractions over
-the same kind of input), and this one holds a `SentimentAnalyzer`, not a `*DataProvider`. Future
+the same kind of input), and this one holds a `SentimentAnalyzer`, not a `*DataProvider`. `marketintelligence/` has `domain/`+`dto/` only (no `provider/`/`model/`/`repository/`/`analyzer/`)
+— unlike every other feature so far, it introduces no new external provider and persists nothing of
+its own; it exists purely to orchestrate the six services above, so it only needs the seam between
+its own assembled result and its REST DTO (see Section 17).
+
+Future
 features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
 `websocket/`) should follow the base `controller/service/repository/model/dto` shape (adding
 `domain/`/`provider/`/`analyzer/`/`indicator/`/`rule/`-style subpackages only if they have the same
@@ -1012,18 +1026,29 @@ web/
                      sidebar/topbar layout primitives, responsive breakpoints at 900px/600px
   app.js             boot: silent session restore, registers routes, starts the router
   router.js          hand-rolled hash router (#/path?symbol=X) — no routing library for 5 routes
-  state.js           session (tokens/user), current symbol, a 60s-TTL per-(symbol,endpoint)
+  state.js           session (tokens/user), current symbol, the signal-type filter selection
+                     (see the signal filter dropdown note below), a 60s-TTL per-(symbol,endpoint)
                      response cache, and a small pub/sub used by the router and shell
   api.js             fetch wrappers for every backend endpoint the web client uses; apiRequest
                      transparently retries once through a refresh-token exchange on a 401
   format.js          number/date/enum formatters, escapeHtml/isSafeHttpUrl (see XSS note below)
+  signalCatalogue.js static catalogue of the 8 real SignalType identifiers + labels + descriptions
+                     (see the signal filter dropdown note below) — not fetched, since the backend
+                     exposes no catalogue endpoint
+  stockUniverse.js   static, hand-curated list of a few well-known {symbol, name} pairs (see the
+                     stock picker dropdown note below) — not fetched, since the backend exposes no
+                     symbol-search/watchlist/instrument-search endpoint; not a whitelist either
   chart.js           hand-rolled canvas price chart: candlesticks + volume strip + hover tooltip
                      + a client-side 1M/3M/6M/1Y/All range selector that slices the already-
                      fetched candle array (no extra requests); falls back to a line/area render
                      when the visible slice has too many candles to render legibly
-  components/        shell (sidebar+topbar+mobile nav), symbolSearch, metricCard, signalBadge,
-                     newsItem (incl. lazy per-article sentiment), sentimentPanel, stateBlock
-                     (shared loading/error/empty rendering, including distinct 422/404/502 states)
+  components/        shell (sidebar+topbar+mobile nav), symbolSearch (+ the opt-in stock picker and
+                     signal filter dropdowns it can host), stockPickerDropdown,
+                     signalFilterDropdown, metricCard, signalBadge, newsItem (incl. lazy
+                     per-article sentiment), sentimentPanel, stateBlock (shared loading/error/empty
+                     rendering for a whole request: distinct 400/422/404/502 states),
+                     contextSection (per-section AVAILABLE/NO_DATA/ERROR rendering for one
+                     ContextSectionResponse — see the market-intelligence note below)
   pages/             auth, overview, analysis, signals, news, company — one module per route,
                      each exporting mount(container, params) -> optional cleanup function
 ```
@@ -1038,19 +1063,136 @@ token, or no stored token) clears the session and the router falls back to the a
 network/provider failure at boot deliberately leaves the stored refresh token alone, since the
 backend being briefly unreachable shouldn't silently discard a user's otherwise-valid session.
 
-**Per-route API fan-out, not a shared bulk endpoint.** Candles, technical analysis, and signals
-each independently re-hit Massive server-side (Section 6) — there is no backend aggregate
-endpoint, by design (Section 2: no premature infrastructure). The web client mirrors this with one
-page per capability (Market Analysis / Signals / News & Sentiment / Company Info) instead of one
-dashboard firing all calls at once, and caches each `(symbol, endpoint)` response client-side for
-60 seconds in `state.js` so navigating between pages for the same symbol doesn't refetch. "Refresh"
-buttons on each page bypass this cache explicitly.
+**Cross-tab refresh token rotation is handled explicitly, not assumed away.** Refresh tokens
+rotate on every use (Section 5): the presented token is revoked server-side and a new one issued.
+Each browser tab holds its own in-memory copy of the current refresh token, so if tab A rotates
+while tab B still holds the now-revoked value, tab B's next refresh attempt gets a legitimate 401
+for a session that is, in fact, still alive (just rotated elsewhere) — without handling this,
+tab B would wrongly treat it as a dead session and clear everything, including tab A's still-valid
+one, since both tabs share the same `localStorage`. Two mechanisms fix this: (1) `state.js`
+listens for the browser's `storage` event and updates its in-memory refresh token whenever another
+tab on the same origin changes it, so a stale in-memory copy self-corrects before it's even used;
+(2) `api.js`'s `refreshAccessToken` additionally retries once with whatever `getRefreshToken()`
+returns *after* a failed attempt, in case another tab rotated it in the gap between this tab
+reading it and the request landing. Only clears the session if a retry with the current token also
+fails. `state.js` also wraps all `localStorage` access in try/catch — some browser privacy modes
+throw on access rather than just being empty — falling back to an in-memory-only session (a reload
+will require login again, but the app doesn't crash) rather than letting an uncaught exception
+break the whole module's import.
+
+**One page per capability, now backed by the shared market-intelligence endpoint, not five
+separate calls.** This superseded an earlier "per-route API fan-out, no shared bulk endpoint"
+design, once Section 17's `GET /market-intelligence` existed to fan out server-side instead. The
+Market Analysis, Signals, Company Info, and News & Sentiment pages each now call
+`getMarketIntelligence(symbol)` exactly once and read their own slice of the response
+(`technicalAnalysis`, `signals`, `companyInformation`, `news`/`sentiment` respectively) — `api.js`
+no longer exports `getTechnicalAnalysis`/`getSignals`/`getFundamentals`/`getNews`/
+`getSentimentAggregate`, only `getMarketIntelligence`, `getCandles`, and `getArticleSentiment`.
+The Market Analysis page is the one exception that still calls `getCandles` directly, alongside
+`getMarketIntelligence`, because `MarketDataSummaryResponse` deliberately omits the full candle
+series the price chart needs (Section 17) — this means loading that page triggers **four** Massive
+calls server-side per load (one from the direct candles call, three more from the three internal
+`MarketDataService` calls inside `marketData`/`technicalAnalysis`/`signals` sections of the context
+orchestration — see Section 17's documented 3x re-fetch characteristic), not the one call it might
+look like from the browser's network tab. All four pages share one `state.js` cache entry keyed
+`(symbol, "market-intelligence")` — navigating from Signals to Company Info to News for the same
+symbol within the 60s TTL reuses that single cached response rather than each page fetching its
+own, a direct benefit of consolidating onto one endpoint. "Refresh" buttons still bypass the cache
+explicitly, re-fetching the whole context (there is no way to refresh one section only).
+
+**Per-section status is rendered by `contextSection.js`, layered on top of `stateBlock.js`, not
+instead of it.** A `ContextSectionResponse` never carries an HTTP-error status of its own (Section
+17: a degraded section is absorbed into the enclosing 200) — only `AVAILABLE`/`NO_DATA`/`ERROR` and
+a fixed backend `message`. Each of the four pages still wraps its one `getMarketIntelligence` call
+in the ordinary `stateBlock.js`/`renderStateBlock` pattern to handle that *outer* request failing
+outright (network error, 400 malformed symbol, 401), and only once that resolves to `"ok"` does it
+hand each section of the parsed context to `contextSection.js`/`renderContextSection`, which switches
+on `AVAILABLE` (render the data), `NO_DATA` (muted status text, no retry — matching the existing
+422 convention below, since more history can't be conjured by retrying), or `ERROR` (an error block
+whose retry button re-runs the *whole* context fetch — there is no per-section retry endpoint).
+Each page also surfaces `context.asOf` next to its content (`.section-asof` in `style.css`) as a
+visible "as of" timestamp, since the four pages' data can now legitimately be a few seconds stale
+relative to each other within one response (Section 17's sequential-fetch design).
 
 **Sentiment fetching respects the Hugging Face free-tier cap (Section 11).** The News & Sentiment
-page calls the aggregate endpoint once per symbol load (which itself warms the cache for up to 10
-articles server-side). Per-article sentiment is never fetched in a loop over the list — each news
-item renders an "Analyze sentiment" button and only calls `GET /news/{id}/sentiment` when a user
-clicks it, so page load cost doesn't scale with article count.
+page no longer calls a standalone aggregate endpoint — `context.sentiment` already carries it
+(warmed for up to 10 articles server-side by the same orchestration call). Per-article sentiment is
+still never fetched in a loop over the list — each news item renders an "Analyze sentiment" button
+and only calls `GET /news/{id}/sentiment` when a user clicks it, so page load cost doesn't scale
+with article count.
+
+**The stock picker dropdown is a discovery shortlist, not a live symbol search — there is no
+backend endpoint for that either.** No controller anywhere (`MarketDataController`,
+`FundamentalAnalysisController`, etc.) exposes a symbol catalogue, watchlist, or instrument-search
+capability; every one of them takes a `symbol` the caller already knows and attempts it against
+Massive directly. `stockUniverse.js` is therefore a small hand-curated `{symbol, name}` list (AAPL,
+IBM, MSFT, NVDA, GOOGL, AMZN) — each entry verified live against the real
+`GET /api/v1/fundamentals` before being added, not assumed — searchable by ticker or company name
+in `stockPickerDropdown.js`'s panel. It is explicitly **not** a whitelist: the plain text search
+box next to it still accepts and submits any correctly-formatted ticker (`isValidSymbol` in
+`format.js`), whether or not that symbol happens to appear in the curated list. Selecting an item
+calls the exact same `submitSymbol`/`onSubmit` path the typed-and-Enter flow already uses (defined
+once in `symbolSearch.js`, not duplicated in the dropdown) — the same `navigate()` → `hashchange` →
+router remount pipeline every existing symbol change already goes through, which is also why no new
+stale-response handling was needed: every page module's existing `alive` flag (set false by its
+`mount()`-returned cleanup before the next page mounts) already discards a late-arriving fetch for
+a symbol the user has since navigated away from. `withStockPicker` is opt-in on `createSymbolSearch`
+and is passed from both `shell.js`'s persistent topbar search and `overview.js`'s local search —
+unlike the signal filter below, the stock picker is most useful exactly where no symbol is selected
+yet, which is `overview.js`'s whole purpose. `overview.js`'s pre-existing hardcoded AAPL/IBM example
+chips were left as-is; they're a duplicate of a strict subset of this feature, but removing them
+wasn't asked for and isn't necessary for this to work.
+
+**The signal filter dropdown filters the current symbol's signals; it does not discover stocks
+across a market, because the backend has no capability to do that.** `SignalAnalysisController`
+(Section 8) takes a single required `symbol` and always computes all 8 `SignalType` values fresh
+for it — there is no catalogue endpoint and no multi-symbol/market-wide scan endpoint anywhere in
+the backend. `signalCatalogue.js` is therefore a small hand-maintained array of the real 8
+`SignalType` identifiers, human labels, and descriptions restating each rule's actual thresholds
+(read directly from `signals/rule/*.kt` and `SignalAnalysisService`'s companion constants — RSI
+70/30, Bollinger near-band 1%, ATR 1%/3%, volume ratio 1.5/0.5, momentum lookback 10 candles / 1%
+flat band) — not fetched, since nothing exists to fetch it from, and not invented, since every
+number in it is copied from the rule that actually computes it. If a future task wants true
+cross-market signal discovery ("find every stock currently showing a bullish MACD crossover"), that
+requires new backend work first — at minimum an endpoint that evaluates signals across a defined
+symbol universe — and is explicitly out of scope here; this feature does not pretend otherwise.
+
+`signalFilterDropdown.js` provides a "Filters ▾" trigger + popover, wired into `symbolSearch.js` via
+an opt-in `withSignalFilter` parameter that only `shell.js`'s persistent topbar search control
+passes — `overview.js`'s local search intentionally does not get it, since that page may have no
+current symbol for the filter to apply to. Both dropdown triggers share one `.search-dropdown-toggle`
+CSS class for identical sizing/hover/active styling, but each keeps distinct visible text ("Stocks
+▾" vs "Filters ▾") rather than a bare icon — two unlabeled chevrons sitting next to each other would
+make the stock picker and the signal filter visually indistinguishable, which is exactly what
+having two separate dropdown controls next to the same search box must not do. `symbolSearch.js`
+also wires each dropdown's `onOpen` callback to close its sibling explicitly, so only one of the
+two is ever open at a time — correct behavior already falls out of how each one's own
+outside-click handling reacts to a genuine click on the other trigger, but making the exclusion
+explicit means it doesn't depend on reasoning through click-event-phase ordering to stay true. The
+panel's own `<input>`/checkboxes/buttons are
+siblings of the symbol-search `<form>`, never children of it, specifically so an Enter keypress
+while typing in the panel's name-filter box can never trigger an implicit submit of the unrelated
+symbol search — those two actions (Section 7: "search submission and signal filtering remain
+distinct actions") share no DOM form. Selecting checkboxes only updates a pending, uncommitted set;
+clicking Apply commits it to `state.js`'s `selectedSignalTypes` (reset on logout like
+`currentSymbol`) and closes the panel; closing without Apply (Escape, outside click, or the × button)
+discards the pending edits and reverts to whatever was last applied — "preserving selections" means
+preserving the last *applied* set, not whatever was mid-edit when the panel closed. Clicking Clear
+commits an empty selection immediately, with no separate Apply step, since clearing has no
+meaningful "pending" state of its own.
+
+Because `state.js`'s `notify()` already drives `router.js`'s full current-route re-render on every
+state change (the same mechanism that already re-renders every page on login/logout/symbol change),
+applying or clearing the filter needs no explicit navigation call of its own — `signals.js` reads
+`getSelectedSignalTypes()` fresh inside its own render path on every (re)mount and filters the
+already-fetched 8 signals down to the selected types, showing a "Filtered by…" banner with its own
+inline Clear control. If the applied filter's page isn't currently mounted, nothing is visibly
+different until the user navigates there (via the sidebar, or the panel's own "View signals for
+{symbol}" link when a symbol is selected) — applying a filter deliberately never force-navigates
+away from whatever page the user is on. The AND/OR "match semantics" question in Section 6 does not
+apply here: with only one symbol in scope, selecting multiple signal types is a display filter over
+that symbol's fixed 8 rows (show the subset whose type was checked), not a multi-signal match test
+against a stock — there is nothing to AND or OR until a market-wide endpoint exists.
 
 **XSS note — this is the first feature rendering third-party text via `innerHTML`.** News
 `title`/`description`/`author`/`source` originate from Massive, not from Orynix's backend logic
@@ -1063,9 +1205,14 @@ matching the trust boundary: only provider-sourced text needs it.
 **Error states are mapped by HTTP status, not shown as one generic error.** `stateBlock.js`
 distinguishes 422 ("not enough history yet" — informational, no retry button, since more history
 can't be conjured by retrying) from 502 ("provider unavailable," with a retry button) from 404
-("no data found") from everything else (generic error + retry). This matters because a thinly
-traded symbol can legitimately return TA successfully while Signals 422s (Signals needs 51
-candles via `getAnalysisHistory`; TA needs 50) — that must not render as if something broke.
+("no data found") from everything else (generic error + retry). After the market-intelligence
+migration above, 422/404/502 from `stateBlock.js` are reachable only via the *outer*
+`getMarketIntelligence` request itself (network failure, etc. — Section 17 never lets a single
+section produce one of these) and via the Market Analysis page's separate `getCandles` call; the
+per-section equivalent — e.g. a thinly traded symbol where technical analysis has enough candles
+but signals doesn't (Signals needs 51 via `getAnalysisHistory`; TA needs 50) — now renders as two
+independently-handled `contextSection.js` states (one `AVAILABLE`, one `NO_DATA`) within the same
+page, not as two different pages each showing their own HTTP error.
 
 **Known limitations**: no automated frontend test suite exists (no `package.json`, so no
 Jest/Vitest/etc.) — this is intentional per Section 2/3's "don't add infrastructure speculatively";
@@ -1073,3 +1220,115 @@ verification is manual (load the app, exercise each page, check the console/netw
 no symbol-autocomplete endpoint, so the symbol search has nothing to debounce against — it
 validates and submits on enter/click only, against the same `^[A-Z.]{1,10}$` pattern the backend
 uses.
+
+## 17. Market Intelligence Context
+
+Implemented: a deterministic orchestration layer that calls the six existing per-symbol
+capabilities (market data, technical analysis, signals, fundamentals, news, sentiment) and
+assembles their results into one snapshot, exposed via
+`GET /api/v1/market-intelligence?symbol=AAPL` (protected, same as every other non-auth endpoint).
+This is the data foundation a future AI Analyst Agent will consume — **not** the agent itself. No
+LLM involvement, no generated commentary, no predictions, nothing beyond what the six underlying
+services already compute.
+
+```
+MarketIntelligenceService
+  -> MarketDataService          (candle summary)
+  -> TechnicalAnalysisService   (indicators)
+  -> SignalAnalysisService      (conditions)
+  -> FundamentalAnalysisService (company info)
+  -> NewsService                (articles)
+  -> SentimentService           (aggregate sentiment)
+```
+
+**Package layout** (`marketintelligence/`) follows the base `controller/service/domain/dto` shape —
+no `provider/model/repository`, since nothing new is persisted and no new external provider is
+introduced; this feature only orchestrates six already-existing services.
+
+**Partial-failure model, not all-or-nothing.** Each section is wrapped in
+`ContextSection<T>(status, data, message, retrievedAt)`, where `status` is one of `AVAILABLE`,
+`NO_DATA`, or `ERROR` (`marketintelligence/domain/ContextSectionStatus.kt`). A private
+`runSection` helper in `MarketIntelligenceService` routes each underlying exception deliberately:
+
+- `InvalidSymbolException` (plus the never-actually-reachable `InvalidTimeframeException`/
+  `InvalidNewsLimitException`, since timeframe is hardcoded and limit is never user-supplied — see
+  below) are **not caught** — they mean the request itself is malformed, not that one section's
+  data happens to be unavailable, so they propagate to `GlobalExceptionHandler`'s existing 400
+  mapping and fail the whole request. Symbol is validated/normalized once, at the top of the
+  service, before any section runs (same regex this codebase already duplicates in
+  `FundamentalAnalysisService`/`NewsService` rather than sharing a validator — see Section 9's
+  precedent for why).
+- `InsufficientCandleDataException`, `CompanyNotFoundException` → `NO_DATA` — a successful lookup
+  that legitimately found nothing or not enough.
+- `MarketDataProviderException`, `FundamentalDataProviderException`, `NewsDataProviderException`,
+  `SentimentAnalyzerException` → `ERROR`.
+- A call that succeeds but returns structurally-empty data (zero candles, zero news articles,
+  zero-article sentiment aggregate) is also downgraded to `NO_DATA` after the fact — this can't be
+  generic, since "empty" means something different per domain type, so each section's own mapping
+  checks it explicitly. In particular, `MarketDataService.getDailyCandles` can return an empty list
+  without throwing; naively taking the latest candle would throw `NoSuchElementException` (mapped
+  by the existing handler to a 404 that would silently kill the *entire* aggregate request) — the
+  market-data section guards this explicitly instead.
+- Every section's `message` is a **fixed, hardcoded string per exception type**, never interpolated
+  `ex.message` — one uniform rule, so a future wording change to any underlying exception can never
+  leak anything new into a 200 response body.
+- `MarketIntelligenceService` is deliberately **not** `@Transactional` — none of the six underlying
+  services are, and wrapping this orchestration in one shared transaction would mean a caught
+  per-section exception marks it rollback-only, so a later section's otherwise-successful commit
+  would throw `UnexpectedRollbackException` and turn one degraded section into a 500 for the whole
+  response, defeating the entire design above.
+
+**This endpoint never returns 502/422/404 for a single degraded section** — those statuses still
+apply to the six *standalone* feature endpoints exactly as before; here they're absorbed into a
+200 with a per-section `ERROR`/`NO_DATA` status instead. Only a malformed symbol (400) or missing
+auth (401) fail the request as a whole.
+
+**Response reuses the existing per-feature DTOs** as each section's payload
+(`ContextSectionResponse<TechnicalAnalysisResponse>`, `<TechnicalSignalSummaryResponse>`,
+`<FundamentalAnalysisResponse>`, `<NewsResponse>`, `<SentimentAggregateResponse>`) rather than
+inventing flattened shapes — this guarantees each section's JSON is byte-identical to that
+feature's own standalone endpoint by construction. The one new payload,
+`MarketDataSummaryResponse`, intentionally does **not** embed the full 365-candle series (that
+stays the job of `GET /market-data/candles`) — just `latestCandle`, `candleCount`, and the
+earliest/latest timestamps, to keep the aggregate response a reasonable size.
+
+**Provenance**: each section's `retrievedAt` is captured by the orchestrator at the moment it calls
+that section — truthful "when this was fetched," not a fabricated provider timestamp. This is the
+only timestamp `FundamentalAnalysisResult`, `SentimentAggregate`, and `NewsResult` carry at all
+(none of the three have their own). `Candle`/`TechnicalAnalysisResult`/`TechnicalSignalSummary`
+already have their own embedded timestamp, left untouched inside `data`. The top-level `asOf` marks
+when the orchestration request started — the response never claims all six sections represent the
+same instant, since they're fetched sequentially.
+
+**Verified, non-obvious latency characteristics** (read from the actual service code, not
+estimated): `MarketDataService.getDailyCandles` has no freshness/DB-first check and calls Massive
+unconditionally on *every* call — since this endpoint calls it directly for the market-data summary
+*and* `TechnicalAnalysisService`/`SignalAnalysisService` each independently re-call it internally,
+one request to this endpoint means **3 separate Massive candle requests, every time**, not just on
+a cold cache. Separately, `NewsService.isFresh` only skips re-fetching once a symbol has 20+
+persisted articles — below that, both this endpoint's direct `news` section call *and*
+`SentimentService.getAggregate`'s internal `NewsService.getNews` call hit the provider, so a sparse
+symbol means **2 real news-provider round-trips** per request, not one cached + one free DB hit.
+Sentiment can additionally make up to 10 sequential Hugging Face calls for never-before-analyzed
+articles (permanently cached per article afterward, per Section 11).
+
+**Sequential execution, deliberately not parallel.** Threads wouldn't fix either dominant cost
+above (the 3x candle re-fetch is a `MarketDataService`-layer characteristic; a cold sentiment
+section's Hugging Face calls would still bound total latency even run alongside the other five).
+Against that: the `Fake*Provider` test doubles this project's entire test suite relies on
+(`support/Fake*.kt`) are plain unsynchronized fields with no thread-safety, so parallelizing here
+would make call-count assertions racy and require touching shared test infrastructure every other
+feature's tests depend on, for one feature's benefit. If cold-request latency proves unacceptable in
+practice, the right fixes are a shared candle fetch at the `MarketDataService` layer or an
+async/polling response shape — not a thread pool bolted onto this orchestrator. Neither is
+implemented; both are explicitly deferred, not forgotten.
+
+**Not exposed as query parameters**: `timeframe` (hardcoded to `"1d"` internally — `CandleTimeframe`
+has only one value today, see Section 6) and `limit` for news/sentiment (both called with `null`,
+which each service already defaults to 20 internally, see Sections 10–11). Adding either would be
+implementable but serves no concrete need yet, per Section 2's "don't build ahead of a stated task."
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): the actual AI
+Analyst Agent and any LLM involvement, price prediction, trading recommendations, candle-fetch
+deduplication across market data/technical analysis/signals, and any async/polling response shape
+for cold-request latency.
