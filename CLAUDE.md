@@ -988,3 +988,88 @@ Only comment when something is genuinely non-obvious: a security consideration, 
 constraint, an unusual workaround, or a business rule that can't be expressed in code — e.g. why
 refresh tokens are opaque rather than JWTs, or why there's no `UserDetailsService`. Avoid
 exhaustive KDoc; a one-line comment is the ceiling, not the floor.
+
+## 16. Web client architecture
+
+The web client (`web/`) is deliberately **vanilla JS/HTML/CSS with no bundler, no package
+manager, and no framework** — just native ES modules loaded via `<script type="module">`. This was
+a conscious choice, not an oversight: the app is small enough that a build step would add
+infrastructure for no concrete benefit, consistent with Section 3's "don't introduce a technology
+not needed for the current task." Do not add webpack/Vite/npm/React/etc. without a concrete need
+that vanilla ES modules can no longer satisfy.
+
+**Must be served over http(s), never opened as `file://`.** `SecurityConfig.corsConfigurationSource`
+only allows `http://localhost:*` / `http://127.0.0.1:*` origins; `fetch` from a `file://` origin
+fails CORS preflight. Serve `web/` with any static file server, e.g. from inside `web/`:
+`python -m http.server 5500` or `npx serve .`, then open `http://localhost:5500`.
+
+**File layout**:
+
+```
+web/
+  index.html        shell: a single #app-root mount point, nothing else
+  style.css          dark-first theme (light theme via @media (prefers-color-scheme: light)),
+                     sidebar/topbar layout primitives, responsive breakpoints at 900px/600px
+  app.js             boot: silent session restore, registers routes, starts the router
+  router.js          hand-rolled hash router (#/path?symbol=X) — no routing library for 5 routes
+  state.js           session (tokens/user), current symbol, a 60s-TTL per-(symbol,endpoint)
+                     response cache, and a small pub/sub used by the router and shell
+  api.js             fetch wrappers for every backend endpoint the web client uses; apiRequest
+                     transparently retries once through a refresh-token exchange on a 401
+  format.js          number/date/enum formatters, escapeHtml/isSafeHttpUrl (see XSS note below)
+  chart.js           hand-rolled canvas price chart: candlesticks + volume strip + hover tooltip
+                     + a client-side 1M/3M/6M/1Y/All range selector that slices the already-
+                     fetched candle array (no extra requests); falls back to a line/area render
+                     when the visible slice has too many candles to render legibly
+  components/        shell (sidebar+topbar+mobile nav), symbolSearch, metricCard, signalBadge,
+                     newsItem (incl. lazy per-article sentiment), sentimentPanel, stateBlock
+                     (shared loading/error/empty rendering, including distinct 422/404/502 states)
+  pages/             auth, overview, analysis, signals, news, company — one module per route,
+                     each exporting mount(container, params) -> optional cleanup function
+```
+
+**Session persistence**: the access token lives in memory only; the refresh token (opaque, not a
+JWT — see Section 5) is persisted in `localStorage`. On boot, `app.js` calls `GET /users/me`
+without an access token on purpose — the resulting 401 drives `apiRequest`'s existing retry path,
+which exchanges the stored refresh token for a new access/refresh pair via `POST /auth/refresh`
+and retries. This reuses one code path for both "silent restore on reload" and "ordinary access
+token expiry mid-session," rather than two parallel mechanisms. A failed refresh (expired/revoked
+token, or no stored token) clears the session and the router falls back to the auth page; a
+network/provider failure at boot deliberately leaves the stored refresh token alone, since the
+backend being briefly unreachable shouldn't silently discard a user's otherwise-valid session.
+
+**Per-route API fan-out, not a shared bulk endpoint.** Candles, technical analysis, and signals
+each independently re-hit Massive server-side (Section 6) — there is no backend aggregate
+endpoint, by design (Section 2: no premature infrastructure). The web client mirrors this with one
+page per capability (Market Analysis / Signals / News & Sentiment / Company Info) instead of one
+dashboard firing all calls at once, and caches each `(symbol, endpoint)` response client-side for
+60 seconds in `state.js` so navigating between pages for the same symbol doesn't refetch. "Refresh"
+buttons on each page bypass this cache explicitly.
+
+**Sentiment fetching respects the Hugging Face free-tier cap (Section 11).** The News & Sentiment
+page calls the aggregate endpoint once per symbol load (which itself warms the cache for up to 10
+articles server-side). Per-article sentiment is never fetched in a loop over the list — each news
+item renders an "Analyze sentiment" button and only calls `GET /news/{id}/sentiment` when a user
+clicks it, so page load cost doesn't scale with article count.
+
+**XSS note — this is the first feature rendering third-party text via `innerHTML`.** News
+`title`/`description`/`author`/`source` originate from Massive, not from Orynix's backend logic
+directly. `format.js` exports `escapeHtml` (applied to all such fields before interpolation) and
+`isSafeHttpUrl` (checked before any article `url` is emitted as an `<a href>`, to reject
+`javascript:`-scheme values). Backend-authored strings (enum names, error `message`s, which
+`GlobalExceptionHandler` already guarantees never leak internals — Section 13) are not escaped,
+matching the trust boundary: only provider-sourced text needs it.
+
+**Error states are mapped by HTTP status, not shown as one generic error.** `stateBlock.js`
+distinguishes 422 ("not enough history yet" — informational, no retry button, since more history
+can't be conjured by retrying) from 502 ("provider unavailable," with a retry button) from 404
+("no data found") from everything else (generic error + retry). This matters because a thinly
+traded symbol can legitimately return TA successfully while Signals 422s (Signals needs 51
+candles via `getAnalysisHistory`; TA needs 50) — that must not render as if something broke.
+
+**Known limitations**: no automated frontend test suite exists (no `package.json`, so no
+Jest/Vitest/etc.) — this is intentional per Section 2/3's "don't add infrastructure speculatively";
+verification is manual (load the app, exercise each page, check the console/network tab). There is
+no symbol-autocomplete endpoint, so the symbol search has nothing to debounce against — it
+validates and submits on enter/click only, against the same `^[A-Z.]{1,10}$` pattern the backend
+uses.
