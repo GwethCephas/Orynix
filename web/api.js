@@ -42,6 +42,10 @@ async function rawRequest(path, { method = "GET", body, accessToken } = {}) {
   return { ok: response.ok, data, status: response.status };
 }
 
+async function attemptRefresh(refreshToken) {
+  return rawRequest("/api/v1/auth/refresh", { method: "POST", body: { refreshToken } });
+}
+
 async function refreshAccessToken() {
   if (refreshInFlight) {
     return refreshInFlight;
@@ -53,10 +57,18 @@ async function refreshAccessToken() {
   }
 
   refreshInFlight = (async () => {
-    const { ok, data } = await rawRequest("/api/v1/auth/refresh", {
-      method: "POST",
-      body: { refreshToken },
-    });
+    let { ok, data } = await attemptRefresh(refreshToken);
+
+    // A rejected refresh token might mean another tab already rotated it (the storage-sync
+    // listener in state.js would have picked up the new value) — retry once with whatever is
+    // current before concluding the session is genuinely dead.
+    if (!ok) {
+      const latestToken = getRefreshToken();
+      if (latestToken && latestToken !== refreshToken) {
+        ({ ok, data } = await attemptRefresh(latestToken));
+      }
+    }
+
     if (!ok) {
       clearSession();
       throw new SessionExpiredError();

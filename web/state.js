@@ -3,11 +3,48 @@ const CACHE_TTL_MS = 60_000;
 
 const listeners = new Set();
 
+function readStoredRefreshToken() {
+  try {
+    return localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+  } catch {
+    console.warn("localStorage is unavailable — sessions will not survive a page reload.");
+    return null;
+  }
+}
+
+function writeStoredRefreshToken(value) {
+  try {
+    if (value) {
+      localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, value);
+    } else {
+      localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Already warned in readStoredRefreshToken; the session still works in-memory for this tab.
+  }
+}
+
 const session = {
   accessToken: null,
-  refreshToken: localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY),
+  refreshToken: readStoredRefreshToken(),
   user: null,
 };
+
+// Keep this tab's in-memory refresh token in sync with other tabs on the same origin —
+// without this, a token rotated in tab A looks "stale" to tab B's next refresh attempt,
+// which the backend correctly rejects as reuse of an already-rotated token, wiping tab B's
+// session even though it was never actually invalid.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== REFRESH_TOKEN_STORAGE_KEY) return;
+    session.refreshToken = event.newValue;
+    if (!event.newValue) {
+      session.accessToken = null;
+      session.user = null;
+    }
+    notify();
+  });
+}
 
 let currentSymbol = null;
 const cache = new Map();
@@ -44,7 +81,7 @@ export function setSession({ accessToken, refreshToken, user }) {
     session.user = user;
   }
   if (refreshToken) {
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+    writeStoredRefreshToken(refreshToken);
   }
   notify();
 }
@@ -58,7 +95,7 @@ export function clearSession() {
   session.accessToken = null;
   session.refreshToken = null;
   session.user = null;
-  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  writeStoredRefreshToken(null);
   cache.clear();
   currentSymbol = null;
   notify();
