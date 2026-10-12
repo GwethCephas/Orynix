@@ -122,36 +122,12 @@ export function getCandles(symbol) {
   });
 }
 
-export function getTechnicalAnalysis(symbol) {
-  return apiRequest(`/api/v1/technical-analysis?symbol=${encodeURIComponent(symbol)}&timeframe=1d`, {
-    useAuth: true,
-  });
-}
-
-export function getSignals(symbol) {
-  return apiRequest(`/api/v1/signals?symbol=${encodeURIComponent(symbol)}&timeframe=1d`, {
-    useAuth: true,
-  });
-}
-
-export function getFundamentals(symbol) {
-  return apiRequest(`/api/v1/fundamentals?symbol=${encodeURIComponent(symbol)}`, {
-    useAuth: true,
-  });
-}
-
-export function getNews(symbol, limit = 20) {
-  return apiRequest(`/api/v1/news?symbol=${encodeURIComponent(symbol)}&limit=${limit}`, {
-    useAuth: true,
-  });
-}
-
 export function getArticleSentiment(newsId) {
   return apiRequest(`/api/v1/news/${encodeURIComponent(newsId)}/sentiment`, { useAuth: true });
 }
 
-export function getSentimentAggregate(symbol, limit = 20) {
-  return apiRequest(`/api/v1/news/sentiment?symbol=${encodeURIComponent(symbol)}&limit=${limit}`, {
+export function getMarketIntelligence(symbol) {
+  return apiRequest(`/api/v1/market-intelligence?symbol=${encodeURIComponent(symbol)}`, {
     useAuth: true,
   });
 }

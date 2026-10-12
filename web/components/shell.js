@@ -64,6 +64,8 @@ export function renderShell(root) {
   const searchContainer = root.querySelector(".topbar-search");
   const search = createSymbolSearch({
     placeholder: "Symbol",
+    withSignalFilter: true,
+    withStockPicker: true,
     onSubmit: (symbol) => {
       const activeLink = root.querySelector(".sidebar-nav-item.active");
       navigate(activeLink?.dataset.path || "analysis", { symbol });

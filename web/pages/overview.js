@@ -52,6 +52,7 @@ export function mount(container) {
   const search = createSymbolSearch({
     initialValue: symbol || "",
     placeholder: "Enter a symbol, e.g. AAPL",
+    withStockPicker: true,
     onSubmit: (value) => navigate("analysis", { symbol: value }),
   });
   container.querySelector(".overview-search").appendChild(search.element);

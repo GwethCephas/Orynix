@@ -248,6 +248,12 @@ button, input {
   margin: 6px 0 14px;
 }
 
+.section-asof {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .section-status {
   color: var(--muted);
   margin: 0;
@@ -327,6 +333,299 @@ button {
   font-size: 12px;
   color: var(--negative);
   white-space: nowrap;
+}
+
+/* ---------- Search dropdowns: stock picker + signal filter ---------- */
+.symbol-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Shared shape for both dropdown triggers so they read as peers; each keeps distinct visible
+   text ("Stocks" / "Filters") so the two controls are never visually confused with each other. */
+.search-dropdown-toggle {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.search-dropdown-toggle:hover {
+  background: var(--card-bg-hover);
+}
+
+.search-dropdown-toggle[aria-expanded="true"] {
+  border-color: var(--accent, #5b9dff);
+  color: var(--accent, #5b9dff);
+}
+
+.signal-filter-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: min(480px, calc(100vh - 80px));
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 14px;
+  z-index: 10;
+}
+
+.signal-filter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.signal-filter-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.signal-filter-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.signal-filter-close:hover {
+  color: var(--fg);
+}
+
+.signal-filter-scope {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+.signal-filter-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.signal-filter-search:focus {
+  outline: none;
+  border-color: var(--accent, #5b9dff);
+}
+
+.signal-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.signal-filter-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.signal-filter-item:hover {
+  background: var(--card-bg-hover);
+}
+
+.signal-filter-item input[type="checkbox"] {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.signal-filter-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.signal-filter-item-label {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.signal-filter-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.signal-filter-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.signal-filter-clear {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.signal-filter-clear:hover {
+  background: var(--card-bg-hover);
+}
+
+.signal-filter-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.signal-filter-apply {
+  background: var(--accent, #5b9dff);
+  color: var(--accent-fg, #0b1420);
+  border: none;
+  border-radius: var(--radius);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.signal-filter-goto-slot {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.signal-filter-goto {
+  color: var(--accent, #5b9dff);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.signal-filter-goto:hover {
+  text-decoration: underline;
+}
+
+.stock-picker-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: min(480px, calc(100vh - 80px));
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 14px;
+  z-index: 10;
+}
+
+.stock-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.stock-picker-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.stock-picker-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.stock-picker-close:hover {
+  color: var(--fg);
+}
+
+.stock-picker-scope {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+.stock-picker-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.stock-picker-search:focus {
+  outline: none;
+  border-color: var(--accent, #5b9dff);
+}
+
+.stock-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.stock-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.stock-picker-item:hover {
+  background: var(--card-bg-hover);
+}
+
+.stock-picker-item-symbol {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.stock-picker-item-name {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ---------- Auth screen ---------- */
@@ -681,6 +980,32 @@ button {
   color: var(--muted);
 }
 
+.signal-filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--neutral-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.signal-filter-banner-clear {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.signal-filter-banner-clear:hover {
+  background: var(--card-bg-hover);
+}
+
 /* ---------- Metric cards (company page etc.) ---------- */
 .metric-grid {
   display: grid;
@@ -968,5 +1293,31 @@ button {
 
   .auth-card {
     padding: 24px;
+  }
+
+  /* A side-anchored absolute panel can overflow off the viewport edge on narrow screens once the
+     trigger itself sits close to that edge (mobile nav toggle + shrunk input) — pin both dropdown
+     panels to the viewport instead of their trigger, like .sidebar's own fixed-overlay pattern. */
+  .signal-filter-panel,
+  .stock-picker-panel {
+    position: fixed;
+    top: 56px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 80px);
+  }
+
+  /* Four controls (input + Search + Stocks + Filters) no longer fit one line in the topbar at this
+     width; .symbol-search-wrapper's flex-wrap lets them drop to a second line rather than overflow,
+     but shrinking these first reduces how often that happens. */
+  .symbol-search-input {
+    width: 90px;
+  }
+
+  .search-dropdown-toggle {
+    padding: 6px 8px;
+    font-size: 12px;
   }
 }

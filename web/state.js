@@ -47,6 +47,7 @@ if (typeof window !== "undefined") {
 }
 
 let currentSymbol = null;
+let selectedSignalTypes = [];
 const cache = new Map();
 
 function notify() {
@@ -98,6 +99,7 @@ export function clearSession() {
   writeStoredRefreshToken(null);
   cache.clear();
   currentSymbol = null;
+  selectedSignalTypes = [];
   notify();
 }
 
@@ -107,6 +109,19 @@ export function getCurrentSymbol() {
 
 export function setCurrentSymbol(symbol) {
   currentSymbol = symbol;
+  notify();
+}
+
+// Client-side-only signal-type filter (see signalCatalogue.js) — the backend has no catalogue or
+// market-wide discovery endpoint, so this only controls which of the current symbol's own signals
+// are displayed on the Signals page. Not persisted across reloads; resets on logout like
+// currentSymbol.
+export function getSelectedSignalTypes() {
+  return selectedSignalTypes;
+}
+
+export function setSelectedSignalTypes(types) {
+  selectedSignalTypes = [...types];
   notify();
 }
 
