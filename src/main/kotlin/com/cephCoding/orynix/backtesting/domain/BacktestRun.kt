@@ -29,6 +29,13 @@ data class BacktestRun(
     val rsiPeriod: Int?,
     val oversoldThreshold: BigDecimal?,
     val overboughtThreshold: BigDecimal?,
+    val signalPeriod: Int?,
+    val bollingerPeriod: Int?,
+    val bollingerStdDevMultiplier: BigDecimal?,
+    val donchianEntryPeriod: Int?,
+    val donchianExitPeriod: Int?,
+    val adxPeriod: Int?,
+    val adxThreshold: BigDecimal?,
     val direction: TradeDirection,
     val initialCapital: BigDecimal,
     val accountCurrency: String,
@@ -47,4 +54,10 @@ data class BacktestRun(
     val netReturnPercent: BigDecimal,
     val maxDrawdownPercent: BigDecimal,
     val finalEquity: BigDecimal,
+    // Nullable because runs persisted before this diagnostic feature existed have no value for
+    // them (CLAUDE.md Section 18) - never a domain-meaning null the way winRate/profitFactor are.
+    val candlesEvaluated: Int?,
+    val entrySignalsGenerated: Int?,
+    val exitSignalsGenerated: Int?,
+    val entriesSkippedInsufficientCash: Int?,
 )

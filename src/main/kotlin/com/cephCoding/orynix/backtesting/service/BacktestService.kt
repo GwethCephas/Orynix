@@ -13,7 +13,11 @@ import com.cephCoding.orynix.backtesting.model.BacktestTradeEntity
 import com.cephCoding.orynix.backtesting.repository.BacktestEquityPointRepository
 import com.cephCoding.orynix.backtesting.repository.BacktestRunRepository
 import com.cephCoding.orynix.backtesting.repository.BacktestTradeRepository
+import com.cephCoding.orynix.backtesting.strategy.AdxTrendStrategy
 import com.cephCoding.orynix.backtesting.strategy.BacktestStrategy
+import com.cephCoding.orynix.backtesting.strategy.BollingerBandsMeanReversionStrategy
+import com.cephCoding.orynix.backtesting.strategy.DonchianChannelBreakoutStrategy
+import com.cephCoding.orynix.backtesting.strategy.MacdCrossoverStrategy
 import com.cephCoding.orynix.backtesting.strategy.MovingAverageCrossoverStrategy
 import com.cephCoding.orynix.backtesting.strategy.RsiThresholdStrategy
 import com.cephCoding.orynix.common.exception.BacktestNotFoundException
@@ -99,6 +103,13 @@ class BacktestService(
             rsiPeriod = parameters.rsiPeriod,
             oversoldThreshold = parameters.oversoldThreshold,
             overboughtThreshold = parameters.overboughtThreshold,
+            signalPeriod = parameters.signalPeriod,
+            bollingerPeriod = parameters.bollingerPeriod,
+            bollingerStdDevMultiplier = parameters.bollingerStdDevMultiplier,
+            donchianEntryPeriod = parameters.donchianEntryPeriod,
+            donchianExitPeriod = parameters.donchianExitPeriod,
+            adxPeriod = parameters.adxPeriod,
+            adxThreshold = parameters.adxThreshold,
             direction = TradeDirection.LONG,
             initialCapital = request.initialCapital,
             accountCurrency = request.accountCurrency,
@@ -117,6 +128,10 @@ class BacktestService(
             netReturnPercent = result.netReturnPercent,
             maxDrawdownPercent = result.maxDrawdownPercent,
             finalEquity = result.finalEquity,
+            candlesEvaluated = result.candlesEvaluated,
+            entrySignalsGenerated = result.entrySignalsGenerated,
+            exitSignalsGenerated = result.exitSignalsGenerated,
+            entriesSkippedInsufficientCash = result.entriesSkippedInsufficientCash,
         )
 
         persist(userId, run, result.trades, result.equityCurve)
@@ -162,11 +177,7 @@ class BacktestService(
     private fun validateStrategyParameters(request: BacktestRequest): StrategyParameters {
         return when (request.strategyType) {
             StrategyType.MOVING_AVERAGE_CROSSOVER -> {
-                if (request.rsiPeriod != null || request.oversoldThreshold != null || request.overboughtThreshold != null) {
-                    throw InvalidStrategyParametersException(
-                        "rsiPeriod/oversoldThreshold/overboughtThreshold are not applicable to MOVING_AVERAGE_CROSSOVER",
-                    )
-                }
+                rejectFieldsFor(request, rsi = true, signal = true, bollinger = true, donchian = true, adx = true)
                 val fastPeriod = request.fastPeriod
                 val slowPeriod = request.slowPeriod
                 if (fastPeriod == null || slowPeriod == null || fastPeriod <= 0 || slowPeriod <= 0 || fastPeriod >= slowPeriod) {
@@ -174,12 +185,10 @@ class BacktestService(
                         "fastPeriod and slowPeriod are required, positive, and fastPeriod must be less than slowPeriod",
                     )
                 }
-                StrategyParameters(fastPeriod = fastPeriod, slowPeriod = slowPeriod, rsiPeriod = null, oversoldThreshold = null, overboughtThreshold = null)
+                StrategyParameters(fastPeriod = fastPeriod, slowPeriod = slowPeriod)
             }
             StrategyType.RSI_THRESHOLD -> {
-                if (request.fastPeriod != null || request.slowPeriod != null) {
-                    throw InvalidStrategyParametersException("fastPeriod/slowPeriod are not applicable to RSI_THRESHOLD")
-                }
+                rejectFieldsFor(request, fastSlow = true, signal = true, bollinger = true, donchian = true, adx = true)
                 val rsiPeriod = request.rsiPeriod
                 val oversold = request.oversoldThreshold
                 val overbought = request.overboughtThreshold
@@ -188,8 +197,89 @@ class BacktestService(
                         "rsiPeriod, oversoldThreshold, and overboughtThreshold are required, and oversoldThreshold must be less than overboughtThreshold",
                     )
                 }
-                StrategyParameters(fastPeriod = null, slowPeriod = null, rsiPeriod = rsiPeriod, oversoldThreshold = oversold, overboughtThreshold = overbought)
+                StrategyParameters(rsiPeriod = rsiPeriod, oversoldThreshold = oversold, overboughtThreshold = overbought)
             }
+            StrategyType.MACD_CROSSOVER -> {
+                rejectFieldsFor(request, rsi = true, bollinger = true, donchian = true, adx = true)
+                val fastPeriod = request.fastPeriod
+                val slowPeriod = request.slowPeriod
+                val signalPeriod = request.signalPeriod
+                if (fastPeriod == null || slowPeriod == null || signalPeriod == null ||
+                    fastPeriod <= 0 || slowPeriod <= 0 || signalPeriod <= 0 || fastPeriod >= slowPeriod
+                ) {
+                    throw InvalidStrategyParametersException(
+                        "fastPeriod, slowPeriod, and signalPeriod are required and positive, and fastPeriod must be less than slowPeriod",
+                    )
+                }
+                StrategyParameters(fastPeriod = fastPeriod, slowPeriod = slowPeriod, signalPeriod = signalPeriod)
+            }
+            StrategyType.BOLLINGER_BANDS -> {
+                rejectFieldsFor(request, fastSlow = true, rsi = true, signal = true, donchian = true, adx = true)
+                val bollingerPeriod = request.bollingerPeriod
+                val stdDevMultiplier = request.bollingerStdDevMultiplier
+                if (bollingerPeriod == null || bollingerPeriod <= 0 || stdDevMultiplier == null || stdDevMultiplier.signum() <= 0) {
+                    throw InvalidStrategyParametersException(
+                        "bollingerPeriod and bollingerStdDevMultiplier are required, and both must be positive",
+                    )
+                }
+                StrategyParameters(bollingerPeriod = bollingerPeriod, bollingerStdDevMultiplier = stdDevMultiplier)
+            }
+            StrategyType.DONCHIAN_CHANNEL_BREAKOUT -> {
+                rejectFieldsFor(request, fastSlow = true, rsi = true, signal = true, bollinger = true, adx = true)
+                val entryPeriod = request.donchianEntryPeriod
+                val exitPeriod = request.donchianExitPeriod
+                if (entryPeriod == null || exitPeriod == null || entryPeriod <= 0 || exitPeriod <= 0) {
+                    throw InvalidStrategyParametersException(
+                        "donchianEntryPeriod and donchianExitPeriod are required and must be positive",
+                    )
+                }
+                StrategyParameters(donchianEntryPeriod = entryPeriod, donchianExitPeriod = exitPeriod)
+            }
+            StrategyType.ADX_TREND -> {
+                rejectFieldsFor(request, fastSlow = true, rsi = true, signal = true, bollinger = true, donchian = true)
+                val adxPeriod = request.adxPeriod
+                val threshold = request.adxThreshold
+                if (adxPeriod == null || adxPeriod <= 0 || threshold == null ||
+                    threshold.signum() < 0 || threshold.compareTo(BigDecimal(100)) > 0
+                ) {
+                    throw InvalidStrategyParametersException(
+                        "adxPeriod must be positive and adxThreshold must be between 0 and 100",
+                    )
+                }
+                StrategyParameters(adxPeriod = adxPeriod, adxThreshold = threshold)
+            }
+        }
+    }
+
+    // Guards against silently ignoring a field the client set but the chosen strategy does not
+    // use (see CLAUDE.md Section 18) - every strategy branch above calls this for exactly the
+    // fields it does not own itself.
+    private fun rejectFieldsFor(
+        request: BacktestRequest,
+        fastSlow: Boolean = false,
+        rsi: Boolean = false,
+        signal: Boolean = false,
+        bollinger: Boolean = false,
+        donchian: Boolean = false,
+        adx: Boolean = false,
+    ) {
+        if (fastSlow && (request.fastPeriod != null || request.slowPeriod != null)) {
+            throw InvalidStrategyParametersException("fastPeriod/slowPeriod are not applicable to ${request.strategyType}")
+        }
+        if (rsi && (request.rsiPeriod != null || request.oversoldThreshold != null || request.overboughtThreshold != null)) {
+            throw InvalidStrategyParametersException("rsiPeriod/oversoldThreshold/overboughtThreshold are not applicable to ${request.strategyType}")
+        }
+        if (signal && request.signalPeriod != null) {
+            throw InvalidStrategyParametersException("signalPeriod is not applicable to ${request.strategyType}")
+        }
+        if (bollinger && (request.bollingerPeriod != null || request.bollingerStdDevMultiplier != null)) {
+            throw InvalidStrategyParametersException("bollingerPeriod/bollingerStdDevMultiplier are not applicable to ${request.strategyType}")
+        }
+        if (donchian && (request.donchianEntryPeriod != null || request.donchianExitPeriod != null)) {
+            throw InvalidStrategyParametersException("donchianEntryPeriod/donchianExitPeriod are not applicable to ${request.strategyType}")
+        }
+        if (adx && (request.adxPeriod != null || request.adxThreshold != null)) {
+            throw InvalidStrategyParametersException("adxPeriod/adxThreshold are not applicable to ${request.strategyType}")
         }
     }
 
@@ -208,6 +298,11 @@ class BacktestService(
         when (strategyType) {
             StrategyType.MOVING_AVERAGE_CROSSOVER -> requireNotNull(parameters.slowPeriod)
             StrategyType.RSI_THRESHOLD -> requireNotNull(parameters.rsiPeriod) + 1
+            StrategyType.MACD_CROSSOVER -> requireNotNull(parameters.slowPeriod) + requireNotNull(parameters.signalPeriod) - 1
+            StrategyType.BOLLINGER_BANDS -> requireNotNull(parameters.bollingerPeriod)
+            StrategyType.DONCHIAN_CHANNEL_BREAKOUT ->
+                maxOf(requireNotNull(parameters.donchianEntryPeriod), requireNotNull(parameters.donchianExitPeriod)) + 1
+            StrategyType.ADX_TREND -> 2 * requireNotNull(parameters.adxPeriod)
         }
 
     private fun buildStrategy(strategyType: StrategyType, parameters: StrategyParameters, candles: List<Candle>): BacktestStrategy =
@@ -223,14 +318,42 @@ class BacktestService(
                 oversoldThreshold = requireNotNull(parameters.oversoldThreshold),
                 overboughtThreshold = requireNotNull(parameters.overboughtThreshold),
             )
+            StrategyType.MACD_CROSSOVER -> MacdCrossoverStrategy(
+                candles = candles,
+                fastPeriod = requireNotNull(parameters.fastPeriod),
+                slowPeriod = requireNotNull(parameters.slowPeriod),
+                signalPeriod = requireNotNull(parameters.signalPeriod),
+            )
+            StrategyType.BOLLINGER_BANDS -> BollingerBandsMeanReversionStrategy(
+                candles = candles,
+                period = requireNotNull(parameters.bollingerPeriod),
+                stdDevMultiplier = requireNotNull(parameters.bollingerStdDevMultiplier).toDouble(),
+            )
+            StrategyType.DONCHIAN_CHANNEL_BREAKOUT -> DonchianChannelBreakoutStrategy(
+                candles = candles,
+                entryLookback = requireNotNull(parameters.donchianEntryPeriod),
+                exitLookback = requireNotNull(parameters.donchianExitPeriod),
+            )
+            StrategyType.ADX_TREND -> AdxTrendStrategy(
+                candles = candles,
+                period = requireNotNull(parameters.adxPeriod),
+                threshold = requireNotNull(parameters.adxThreshold).toDouble(),
+            )
         }
 
     private data class StrategyParameters(
-        val fastPeriod: Int?,
-        val slowPeriod: Int?,
-        val rsiPeriod: Int?,
-        val oversoldThreshold: BigDecimal?,
-        val overboughtThreshold: BigDecimal?,
+        val fastPeriod: Int? = null,
+        val slowPeriod: Int? = null,
+        val rsiPeriod: Int? = null,
+        val oversoldThreshold: BigDecimal? = null,
+        val overboughtThreshold: BigDecimal? = null,
+        val signalPeriod: Int? = null,
+        val bollingerPeriod: Int? = null,
+        val bollingerStdDevMultiplier: BigDecimal? = null,
+        val donchianEntryPeriod: Int? = null,
+        val donchianExitPeriod: Int? = null,
+        val adxPeriod: Int? = null,
+        val adxThreshold: BigDecimal? = null,
     )
 
     companion object {

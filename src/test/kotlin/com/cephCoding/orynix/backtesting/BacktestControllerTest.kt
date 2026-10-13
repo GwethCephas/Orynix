@@ -56,12 +56,240 @@ class BacktestControllerTest : AbstractIntegrationTest() {
         rsiPeriod = null,
         oversoldThreshold = null,
         overboughtThreshold = null,
+        signalPeriod = null,
+        bollingerPeriod = null,
+        bollingerStdDevMultiplier = null,
+        donchianEntryPeriod = null,
+        donchianExitPeriod = null,
+        adxPeriod = null,
+        adxThreshold = null,
         initialCapital = BigDecimal("1000"),
         accountCurrency = "USD",
         quantity = BigDecimal("1"),
         commissionPerOrder = BigDecimal("0"),
         slippageBps = 0,
     )
+
+    // Hand-verified by running MacdCalculator's own EMA algorithm (fast 2, slow 3, signal 2) over
+    // this series, identical to MacdCrossoverStrategyTest: a bullish crossover decided at index 4
+    // (fills at index 5's open), a bearish crossover decided at index 6 (fills at index 7's open).
+    private fun macdCandles(symbol: String): List<Candle> {
+        val closes = listOf(10.0, 10.0, 10.0, 10.0, 100.0, 90.0, 10.0, 10.0)
+        return closes.mapIndexed { i, close -> candle(symbol, i, open = close - 1.0, close = close) }
+    }
+
+    // Hand-verified by running BollingerBandsCalculator's own algorithm (period 5, multiplier 1.0)
+    // over this series, identical to BollingerBandsMeanReversionStrategyTest: a breakdown below
+    // the lower band decided at index 5 (fills at index 6's open), a reversion above the middle
+    // band decided at index 7 (fills at index 8's open).
+    private fun bollingerCandles(symbol: String): List<Candle> {
+        val closes = listOf(100.0, 102.0, 98.0, 101.0, 99.0, 85.0, 90.0, 101.0, 100.0, 100.0)
+        return closes.mapIndexed { i, close -> candle(symbol, i, open = close - 1.0, close = close) }
+    }
+
+    private fun macdCrossoverRequest(symbol: String = "BTEST") = movingAverageCrossoverRequest(symbol).copy(
+        fromDate = LocalDate.of(2026, 1, 5),
+        strategyType = StrategyType.MACD_CROSSOVER,
+        fastPeriod = 2,
+        slowPeriod = 3,
+        signalPeriod = 2,
+    )
+
+    private fun bollingerBandsRequest(symbol: String = "BTEST") = movingAverageCrossoverRequest(symbol).copy(
+        fromDate = LocalDate.of(2026, 1, 6),
+        toDate = LocalDate.of(2026, 1, 12),
+        strategyType = StrategyType.BOLLINGER_BANDS,
+        fastPeriod = null,
+        slowPeriod = null,
+        bollingerPeriod = 5,
+        bollingerStdDevMultiplier = BigDecimal("1.0"),
+    )
+
+    @Test
+    fun `a MACD crossover scenario produces the hand-computed trade`() {
+        val auth = register("backtest-macd@example.com")
+        fakeMarketDataProvider.candlesToReturn = macdCandles("BTEST")
+
+        val response = postBacktest(auth.accessToken, macdCrossoverRequest()).andReturn().response
+        assertEquals(201, response.status)
+        val body = objectMapper.readValue(response.contentAsString, BacktestResponse::class.java)
+
+        assertEquals(1, body.totalTrades)
+        assertEquals(0, body.winningTrades)
+        assertEquals(1, body.losingTrades)
+        assertEquals(BigDecimal("-80.0000"), body.netPnl)
+        assertEquals(BigDecimal("920.0000"), body.finalEquity)
+    }
+
+    @Test
+    fun `a Bollinger Bands mean-reversion scenario produces the hand-computed trade`() {
+        val auth = register("backtest-bollinger@example.com")
+        fakeMarketDataProvider.candlesToReturn = bollingerCandles("BTEST")
+
+        val response = postBacktest(auth.accessToken, bollingerBandsRequest()).andReturn().response
+        assertEquals(201, response.status)
+        val body = objectMapper.readValue(response.contentAsString, BacktestResponse::class.java)
+
+        assertEquals(1, body.totalTrades)
+        assertEquals(1, body.winningTrades)
+        assertEquals(0, body.losingTrades)
+        assertEquals(BigDecimal("10.0000"), body.netPnl)
+        assertEquals(BigDecimal("1010.0000"), body.finalEquity)
+    }
+
+    @Test
+    fun `MACD parameters are rejected with 400 when the request is actually RSI_THRESHOLD`() {
+        val auth = register("backtest-macdcrossparams@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(strategyType = StrategyType.RSI_THRESHOLD, signalPeriod = 2, rsiPeriod = null)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `Bollinger Bands parameters are rejected with 400 when fastPeriod is also supplied`() {
+        val auth = register("backtest-bollingercrossparams@example.com")
+
+        val request = bollingerBandsRequest().copy(fastPeriod = 10)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `an invalid Bollinger standard deviation multiplier is rejected with 400`() {
+        val auth = register("backtest-bollingerinvalid@example.com")
+
+        val request = bollingerBandsRequest().copy(bollingerStdDevMultiplier = BigDecimal("0"))
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    // Hand-verified by running DonchianCalculator's own algorithm (entry lookback 3, exit
+    // lookback 2) over this series, identical to DonchianChannelBreakoutStrategyTest: a breakout
+    // above the entry channel decided at index 4 (fills at index 5's open), a breakdown below the
+    // exit channel decided at index 6 (fills at index 7's open). Candles use explicit high/low
+    // (not the open/close-derived +-1 of the candle() helper) since Donchian genuinely needs a
+    // distinct high/low series; two trailing flat bars let the SIGNAL exit resolve instead of an
+    // END_OF_PERIOD force-close.
+    private fun donchianCandles(symbol: String): List<Candle> {
+        val highs = listOf(100.0, 101.0, 99.0, 102.0, 125.0, 118.0, 110.0, 110.0, 110.0)
+        val lows = listOf(98.0, 99.0, 97.0, 100.0, 118.0, 112.0, 104.0, 104.0, 104.0)
+        val closes = listOf(99.0, 100.0, 98.0, 101.0, 120.0, 115.0, 107.0, 107.0, 107.0)
+        return highs.indices.map { i ->
+            Candle(
+                symbol = symbol,
+                timeframe = CandleTimeframe.DAILY,
+                timestamp = Instant.parse("2026-01-01T00:00:00Z").plus(i.toLong(), ChronoUnit.DAYS),
+                open = BigDecimal.valueOf(closes[i]),
+                high = BigDecimal.valueOf(highs[i]),
+                low = BigDecimal.valueOf(lows[i]),
+                close = BigDecimal.valueOf(closes[i]),
+                volume = BigDecimal.valueOf(1_000_000.0),
+            )
+        }
+    }
+
+    // Hand-verified by running AdxCalculator's own Wilder double-smoothing algorithm (period 5)
+    // over this series, identical to AdxTrendStrategyTest: flat baseline (12 bars), sustained
+    // uptrend (20 bars) producing a confirmed bullish-trend entry at index 13 (fills at index 14's
+    // open), then a reversal (10 bars) producing a confirmed DI-reversal exit at index 33 (fills
+    // at index 34's open).
+    private fun adxCandles(symbol: String): List<Candle> {
+        val candles = mutableListOf<Candle>()
+        var i = 0
+        fun add(high: Double, low: Double, close: Double) {
+            candles.add(
+                Candle(
+                    symbol = symbol,
+                    timeframe = CandleTimeframe.DAILY,
+                    timestamp = Instant.parse("2026-01-01T00:00:00Z").plus(i.toLong(), ChronoUnit.DAYS),
+                    open = BigDecimal.valueOf(close),
+                    high = BigDecimal.valueOf(high),
+                    low = BigDecimal.valueOf(low),
+                    close = BigDecimal.valueOf(close),
+                    volume = BigDecimal.valueOf(1_000_000.0),
+                ),
+            )
+            i++
+        }
+        repeat(12) { add(100.0, 96.0, 98.0) }
+        repeat(20) { step -> val up = (step + 1) * 3.0; add(100.0 + up, 96.0 + up, 98.0 + up) }
+        repeat(10) { step -> val down = (step + 1) * 6.0; add(100.0 + 60.0 - down + 1.0, 100.0 + 60.0 - down - 5.0, 100.0 + 60.0 - down - 2.0) }
+        return candles
+    }
+
+    private fun donchianRequest(symbol: String = "BTEST") = movingAverageCrossoverRequest(symbol).copy(
+        fromDate = LocalDate.of(2026, 1, 5),
+        toDate = LocalDate.of(2026, 1, 12),
+        strategyType = StrategyType.DONCHIAN_CHANNEL_BREAKOUT,
+        fastPeriod = null,
+        slowPeriod = null,
+        donchianEntryPeriod = 3,
+        donchianExitPeriod = 2,
+    )
+
+    private fun adxRequest(symbol: String = "BTEST") = movingAverageCrossoverRequest(symbol).copy(
+        fromDate = LocalDate.of(2026, 1, 11),
+        toDate = LocalDate.of(2026, 2, 15),
+        strategyType = StrategyType.ADX_TREND,
+        fastPeriod = null,
+        slowPeriod = null,
+        adxPeriod = 5,
+        adxThreshold = BigDecimal("25"),
+    )
+
+    @Test
+    fun `a Donchian Channel Breakout scenario produces the hand-computed trade`() {
+        val auth = register("backtest-donchian@example.com")
+        fakeMarketDataProvider.candlesToReturn = donchianCandles("BTEST")
+
+        val response = postBacktest(auth.accessToken, donchianRequest()).andReturn().response
+        assertEquals(201, response.status)
+        val body = objectMapper.readValue(response.contentAsString, BacktestResponse::class.java)
+
+        assertEquals(1, body.totalTrades)
+        assertEquals(0, body.winningTrades)
+        assertEquals(1, body.losingTrades)
+        assertEquals(BigDecimal("-8.0000"), body.netPnl)
+        assertEquals(BigDecimal("992.0000"), body.finalEquity)
+    }
+
+    @Test
+    fun `an ADX Trend scenario produces the hand-computed trade`() {
+        val auth = register("backtest-adx@example.com")
+        fakeMarketDataProvider.candlesToReturn = adxCandles("BTEST")
+
+        val response = postBacktest(auth.accessToken, adxRequest()).andReturn().response
+        assertEquals(201, response.status)
+        val body = objectMapper.readValue(response.contentAsString, BacktestResponse::class.java)
+
+        assertEquals(1, body.totalTrades)
+        assertEquals(1, body.winningTrades)
+        assertEquals(0, body.losingTrades)
+        assertEquals(BigDecimal("33.0000"), body.netPnl)
+        assertEquals(BigDecimal("1033.0000"), body.finalEquity)
+    }
+
+    @Test
+    fun `Donchian parameters are rejected with 400 when fastPeriod is also supplied`() {
+        val auth = register("backtest-donchiancrossparams@example.com")
+
+        val request = donchianRequest().copy(fastPeriod = 10)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `an ADX threshold outside 0 to 100 is rejected with 400`() {
+        val auth = register("backtest-adxinvalid@example.com")
+
+        val request = adxRequest().copy(adxThreshold = BigDecimal("150"))
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `ADX parameters are rejected with 400 when rsiPeriod is also supplied`() {
+        val auth = register("backtest-adxcrossparams@example.com")
+
+        val request = adxRequest().copy(rsiPeriod = 14)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
 
     private fun postBacktest(token: String, request: BacktestRequest) = mockMvc.post("/api/v1/backtests") {
         contentType = MediaType.APPLICATION_JSON

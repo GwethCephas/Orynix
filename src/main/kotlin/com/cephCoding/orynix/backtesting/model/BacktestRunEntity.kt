@@ -60,6 +60,27 @@ class BacktestRunEntity(
     @Column(name = "overbought_threshold")
     val overboughtThreshold: BigDecimal?,
 
+    @Column(name = "signal_period")
+    val signalPeriod: Int?,
+
+    @Column(name = "bollinger_period")
+    val bollingerPeriod: Int?,
+
+    @Column(name = "bollinger_std_dev_multiplier")
+    val bollingerStdDevMultiplier: BigDecimal?,
+
+    @Column(name = "donchian_entry_period")
+    val donchianEntryPeriod: Int?,
+
+    @Column(name = "donchian_exit_period")
+    val donchianExitPeriod: Int?,
+
+    @Column(name = "adx_period")
+    val adxPeriod: Int?,
+
+    @Column(name = "adx_threshold")
+    val adxThreshold: BigDecimal?,
+
     @Column(nullable = false)
     val direction: String,
 
@@ -113,6 +134,18 @@ class BacktestRunEntity(
 
     @Column(name = "final_equity", nullable = false)
     val finalEquity: BigDecimal,
+
+    @Column(name = "candles_evaluated")
+    val candlesEvaluated: Int?,
+
+    @Column(name = "entry_signals_generated")
+    val entrySignalsGenerated: Int?,
+
+    @Column(name = "exit_signals_generated")
+    val exitSignalsGenerated: Int?,
+
+    @Column(name = "entries_skipped_insufficient_cash")
+    val entriesSkippedInsufficientCash: Int?,
 ) {
     fun toDomain() = BacktestRun(
         id = id,
@@ -127,6 +160,13 @@ class BacktestRunEntity(
         rsiPeriod = rsiPeriod,
         oversoldThreshold = oversoldThreshold,
         overboughtThreshold = overboughtThreshold,
+        signalPeriod = signalPeriod,
+        bollingerPeriod = bollingerPeriod,
+        bollingerStdDevMultiplier = bollingerStdDevMultiplier,
+        donchianEntryPeriod = donchianEntryPeriod,
+        donchianExitPeriod = donchianExitPeriod,
+        adxPeriod = adxPeriod,
+        adxThreshold = adxThreshold,
         direction = TradeDirection.valueOf(direction),
         initialCapital = initialCapital,
         accountCurrency = accountCurrency,
@@ -145,6 +185,10 @@ class BacktestRunEntity(
         netReturnPercent = netReturnPercent,
         maxDrawdownPercent = maxDrawdownPercent,
         finalEquity = finalEquity,
+        candlesEvaluated = candlesEvaluated,
+        entrySignalsGenerated = entrySignalsGenerated,
+        exitSignalsGenerated = exitSignalsGenerated,
+        entriesSkippedInsufficientCash = entriesSkippedInsufficientCash,
     )
 
     companion object {
@@ -162,6 +206,13 @@ class BacktestRunEntity(
             rsiPeriod = run.rsiPeriod,
             oversoldThreshold = run.oversoldThreshold,
             overboughtThreshold = run.overboughtThreshold,
+            signalPeriod = run.signalPeriod,
+            bollingerPeriod = run.bollingerPeriod,
+            bollingerStdDevMultiplier = run.bollingerStdDevMultiplier,
+            donchianEntryPeriod = run.donchianEntryPeriod,
+            donchianExitPeriod = run.donchianExitPeriod,
+            adxPeriod = run.adxPeriod,
+            adxThreshold = run.adxThreshold,
             direction = run.direction.name,
             initialCapital = run.initialCapital,
             accountCurrency = run.accountCurrency,
@@ -180,6 +231,10 @@ class BacktestRunEntity(
             netReturnPercent = run.netReturnPercent,
             maxDrawdownPercent = run.maxDrawdownPercent,
             finalEquity = run.finalEquity,
+            candlesEvaluated = run.candlesEvaluated,
+            entrySignalsGenerated = run.entrySignalsGenerated,
+            exitSignalsGenerated = run.exitSignalsGenerated,
+            entriesSkippedInsufficientCash = run.entriesSkippedInsufficientCash,
         )
     }
 }
