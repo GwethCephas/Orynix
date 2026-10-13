@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { path: "signals", label: "Signals" },
   { path: "news", label: "News & Sentiment" },
   { path: "company", label: "Company Info" },
+  { path: "backtests", label: "Backtesting" },
 ];
 
 export function renderShell(root) {
