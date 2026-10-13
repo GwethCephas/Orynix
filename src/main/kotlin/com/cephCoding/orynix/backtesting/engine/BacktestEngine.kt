@@ -27,6 +27,14 @@ data class BacktestEngineResult(
     val breakevenTrades: Int,
     val winRate: BigDecimal?,
     val profitFactor: BigDecimal?,
+    // Diagnostics (CLAUDE.md Section 18) - exist specifically to distinguish "the strategy never
+    // signaled" from "it signaled but every entry was skipped," since totalTrades alone cannot.
+    // entriesSkippedInsufficientCash is the only skip reason the engine implements today (step 1
+    // below) - there is deliberately no separate reasons breakdown for a single possible cause.
+    val candlesEvaluated: Int,
+    val entrySignalsGenerated: Int,
+    val exitSignalsGenerated: Int,
+    val entriesSkippedInsufficientCash: Int,
 )
 
 /**
@@ -67,6 +75,9 @@ object BacktestEngine {
         val equityCurve = mutableListOf<EquityPoint>()
         var peakEquity = initialCapital
         var maxDrawdownPercent = BigDecimal.ZERO
+        var entrySignalsGenerated = 0
+        var exitSignalsGenerated = 0
+        var entriesSkippedInsufficientCash = 0
 
         fun closePosition(fillPrice: BigDecimal, exitTimestamp: Instant, exitReason: ExitReason) {
             val entryPrice = requireNotNull(openEntryPrice)
@@ -103,9 +114,11 @@ object BacktestEngine {
                         state = ExecutionState.IN_POSITION
                         openEntryTimestamp = bar.timestamp
                         openEntryPrice = fillPrice
+                    } else {
+                        entriesSkippedInsufficientCash++
                     }
-                    // else: insufficient cash - the entry is silently skipped (visible in the
-                    // result as fewer trades than signals), not an error.
+                    // insufficient cash: the entry is silently skipped (visible in the result as
+                    // fewer trades than entrySignalsGenerated), not an error.
                 }
                 StrategyAction.EXIT_LONG -> {
                     val fillPrice = bar.open.multiply(BigDecimal.ONE.subtract(slippageFraction))
@@ -145,8 +158,10 @@ object BacktestEngine {
             if (i < candles.size - 1) {
                 val action = strategy.signalAt(i, candles)
                 if (state == ExecutionState.FLAT && action == StrategyAction.ENTER_LONG) {
+                    entrySignalsGenerated++
                     pendingAction = StrategyAction.ENTER_LONG
                 } else if (state == ExecutionState.IN_POSITION && action == StrategyAction.EXIT_LONG) {
+                    exitSignalsGenerated++
                     pendingAction = StrategyAction.EXIT_LONG
                 }
             }
@@ -196,6 +211,10 @@ object BacktestEngine {
             breakevenTrades = breakevenTrades,
             winRate = winRate,
             profitFactor = profitFactor,
+            candlesEvaluated = candles.size - firstTradableIndex,
+            entrySignalsGenerated = entrySignalsGenerated,
+            exitSignalsGenerated = exitSignalsGenerated,
+            entriesSkippedInsufficientCash = entriesSkippedInsufficientCash,
         )
     }
 

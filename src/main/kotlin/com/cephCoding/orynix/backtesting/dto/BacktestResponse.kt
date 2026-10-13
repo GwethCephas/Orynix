@@ -22,6 +22,13 @@ data class BacktestResponse(
     val rsiPeriod: Int?,
     val oversoldThreshold: BigDecimal?,
     val overboughtThreshold: BigDecimal?,
+    val signalPeriod: Int?,
+    val bollingerPeriod: Int?,
+    val bollingerStdDevMultiplier: BigDecimal?,
+    val donchianEntryPeriod: Int?,
+    val donchianExitPeriod: Int?,
+    val adxPeriod: Int?,
+    val adxThreshold: BigDecimal?,
     val direction: TradeDirection,
     val initialCapital: BigDecimal,
     val accountCurrency: String,
@@ -40,6 +47,10 @@ data class BacktestResponse(
     val netReturnPercent: BigDecimal,
     val maxDrawdownPercent: BigDecimal,
     val finalEquity: BigDecimal,
+    val candlesEvaluated: Int?,
+    val entrySignalsGenerated: Int?,
+    val exitSignalsGenerated: Int?,
+    val entriesSkippedInsufficientCash: Int?,
 ) {
     companion object {
         fun from(run: BacktestRun) = BacktestResponse(
@@ -55,6 +66,13 @@ data class BacktestResponse(
             rsiPeriod = run.rsiPeriod,
             oversoldThreshold = run.oversoldThreshold,
             overboughtThreshold = run.overboughtThreshold,
+            signalPeriod = run.signalPeriod,
+            bollingerPeriod = run.bollingerPeriod,
+            bollingerStdDevMultiplier = run.bollingerStdDevMultiplier,
+            donchianEntryPeriod = run.donchianEntryPeriod,
+            donchianExitPeriod = run.donchianExitPeriod,
+            adxPeriod = run.adxPeriod,
+            adxThreshold = run.adxThreshold,
             direction = run.direction,
             initialCapital = run.initialCapital,
             accountCurrency = run.accountCurrency,
@@ -73,6 +91,10 @@ data class BacktestResponse(
             netReturnPercent = run.netReturnPercent,
             maxDrawdownPercent = run.maxDrawdownPercent,
             finalEquity = run.finalEquity,
+            candlesEvaluated = run.candlesEvaluated,
+            entrySignalsGenerated = run.entrySignalsGenerated,
+            exitSignalsGenerated = run.exitSignalsGenerated,
+            entriesSkippedInsufficientCash = run.entriesSkippedInsufficientCash,
         )
     }
 }

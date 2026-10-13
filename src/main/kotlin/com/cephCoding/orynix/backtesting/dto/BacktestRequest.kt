@@ -23,11 +23,21 @@ data class BacktestRequest(
     @field:NotNull
     val strategyType: StrategyType,
 
+    // fastPeriod/slowPeriod are shared between MOVING_AVERAGE_CROSSOVER (SMA periods) and
+    // MACD_CROSSOVER (EMA periods) - a deliberate reuse per CLAUDE.md Section 18, not a new pair
+    // of MACD-specific fields, since both are legitimately "fast/slow period" concepts.
     val fastPeriod: Int?,
     val slowPeriod: Int?,
     val rsiPeriod: Int?,
     val oversoldThreshold: BigDecimal?,
     val overboughtThreshold: BigDecimal?,
+    val signalPeriod: Int?,
+    val bollingerPeriod: Int?,
+    val bollingerStdDevMultiplier: BigDecimal?,
+    val donchianEntryPeriod: Int?,
+    val donchianExitPeriod: Int?,
+    val adxPeriod: Int?,
+    val adxThreshold: BigDecimal?,
 
     @field:NotNull
     @field:Positive

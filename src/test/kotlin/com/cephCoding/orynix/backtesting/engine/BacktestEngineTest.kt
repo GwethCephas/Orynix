@@ -57,6 +57,10 @@ class BacktestEngineTest {
         assertEquals(BigDecimal("120.0000"), trade.entryPrice)
         assertEquals(BigDecimal("150.0000"), trade.exitPrice)
         assertEquals(ExitReason.END_OF_PERIOD, trade.exitReason)
+        assertEquals(1, result.entrySignalsGenerated)
+        assertEquals(0, result.exitSignalsGenerated)
+        assertEquals(0, result.entriesSkippedInsufficientCash)
+        assertEquals(3, result.candlesEvaluated)
     }
 
     @Test
@@ -86,6 +90,9 @@ class BacktestEngineTest {
         assertEquals(1, result.winningTrades)
         assertEquals(0, result.losingTrades)
         assertNull(result.profitFactor)
+        assertEquals(1, result.entrySignalsGenerated)
+        assertEquals(1, result.exitSignalsGenerated)
+        assertEquals(0, result.entriesSkippedInsufficientCash)
     }
 
     @Test
@@ -180,6 +187,9 @@ class BacktestEngineTest {
 
         assertTrue(result.trades.isEmpty())
         assertEquals(BigDecimal("50.0000"), result.finalEquity)
+        assertEquals(1, result.entrySignalsGenerated)
+        assertEquals(1, result.entriesSkippedInsufficientCash)
+        assertEquals(0, result.exitSignalsGenerated)
     }
 
     @Test
@@ -203,6 +213,8 @@ class BacktestEngineTest {
         assertNull(result.winRate)
         assertNull(result.profitFactor)
         assertEquals(0, result.totalTrades)
+        assertEquals(0, result.entrySignalsGenerated)
+        assertEquals(0, result.entriesSkippedInsufficientCash)
     }
 
     @Test
