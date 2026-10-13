@@ -41,8 +41,25 @@ export function mount(container) {
       onRetry: () => load(true),
       renderContent: (context) => {
         asOfEl.textContent = `As of ${formatDateTime(context.asOf)}`;
-        renderContextSection(contentEl, context.companyInformation, {
+        const section = context.assetType === "FOREX" ? context.instrumentInformation : context.companyInformation;
+        renderContextSection(contentEl, section, {
           renderContent: (data) => {
+            if (context.assetType === "FOREX") {
+              contentEl.innerHTML = `
+                <div class="metric-grid">
+                  ${metricCardHtml({ label: "Pair", value: escapeHtml(data.displaySymbol) })}
+                  ${metricCardHtml({ label: "Base Currency", value: escapeHtml(data.baseCurrency) })}
+                  ${metricCardHtml({ label: "Quote Currency", value: escapeHtml(data.quoteCurrency) })}
+                </div>
+                <p class="section-disclaimer">${escapeHtml(data.description)}</p>
+                <p class="section-disclaimer">
+                  Currency pair reference data only. Forex pairs have no company, exchange, or
+                  market-capitalization equivalent, and news/sentiment coverage is not available
+                  for forex under the current data provider integration.
+                </p>`;
+              return;
+            }
+
             const company = data.company;
             contentEl.innerHTML = `
               <div class="metric-grid">

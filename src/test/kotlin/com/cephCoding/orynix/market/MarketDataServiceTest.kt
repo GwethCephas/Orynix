@@ -87,4 +87,32 @@ class MarketDataServiceTest : AbstractIntegrationTest() {
         assert(errors.isEmpty()) { "Concurrent getDailyCandles calls threw: $errors" }
         assert(repository.findBySymbolAndTimeframeAndTimestampIn("RACE", "1d", candles.map { it.timestamp }).size == candles.size)
     }
+
+    @Test
+    fun `a forex display symbol is normalized back onto returned and persisted candles`() {
+        // The fake provider echoes candlesToReturn verbatim regardless of the providerSymbol it
+        // was called with (it has no real ticker-string sensitivity) — tagging the fixture with
+        // Massive's provider-ticker format directly proves MarketDataService, not the provider,
+        // is what normalizes the symbol back to the display form "EUR/USD" before returning or
+        // persisting it.
+        val candle = Candle(
+            symbol = "C:EURUSD",
+            timeframe = CandleTimeframe.DAILY,
+            timestamp = Instant.parse("2026-01-01T00:00:00Z"),
+            open = BigDecimal("1.1000"),
+            high = BigDecimal("1.1050"),
+            low = BigDecimal("1.0950"),
+            close = BigDecimal("1.1020"),
+            volume = BigDecimal("1000"),
+        )
+        fakeMarketDataProvider.candlesToReturn = listOf(candle)
+
+        val result = marketDataService.getDailyCandles("eur/usd", "1d")
+
+        assert(result.size == 1)
+        assert(result[0].symbol == "EUR/USD")
+
+        val persisted = repository.findBySymbolAndTimeframeAndTimestampIn("EUR/USD", "1d", listOf(candle.timestamp))
+        assert(persisted.size == 1)
+    }
 }

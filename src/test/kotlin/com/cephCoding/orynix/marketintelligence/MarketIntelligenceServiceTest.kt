@@ -7,6 +7,7 @@ import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import com.cephCoding.orynix.common.exception.NewsDataProviderException
 import com.cephCoding.orynix.common.exception.SentimentAnalyzerException
 import com.cephCoding.orynix.fundamentals.domain.CompanyProfile
+import com.cephCoding.orynix.instrument.domain.AssetType
 import com.cephCoding.orynix.market.domain.Candle
 import com.cephCoding.orynix.market.domain.CandleTimeframe
 import com.cephCoding.orynix.marketintelligence.domain.ContextSectionStatus
@@ -248,6 +249,64 @@ class MarketIntelligenceServiceTest : AbstractIntegrationTest() {
         marketIntelligenceService.getContext("MIDBLFETCH")
 
         assertEquals(2, fakeNewsProvider.callCount)
+    }
+
+    @Test
+    fun `a forex pair gets asset type FOREX with instrument information instead of company information`() {
+        fakeMarketDataProvider.candlesToReturn = candleFixture("EUR/USD", 60)
+
+        val context = marketIntelligenceService.getContext("eur/usd")
+
+        assertEquals("EUR/USD", context.symbol)
+        assertEquals(AssetType.FOREX, context.assetType)
+
+        assertEquals(ContextSectionStatus.AVAILABLE, context.marketData.status)
+        assertEquals(ContextSectionStatus.AVAILABLE, context.technicalAnalysis.status)
+        assertEquals(ContextSectionStatus.AVAILABLE, context.signals.status)
+
+        assertEquals(ContextSectionStatus.NO_DATA, context.companyInformation.status)
+        assertNull(context.companyInformation.data)
+
+        assertEquals(ContextSectionStatus.AVAILABLE, context.instrumentInformation.status)
+        assertEquals("EUR", context.instrumentInformation.data?.baseCurrency)
+        assertEquals("USD", context.instrumentInformation.data?.quoteCurrency)
+    }
+
+    @Test
+    fun `a forex pair never calls the news or sentiment providers`() {
+        fakeMarketDataProvider.candlesToReturn = candleFixture("GBP/USD", 60)
+
+        val context = marketIntelligenceService.getContext("gbp/usd")
+
+        assertEquals(ContextSectionStatus.NO_DATA, context.news.status)
+        assertEquals(ContextSectionStatus.NO_DATA, context.sentiment.status)
+        assertNotNull(context.news.message)
+        assertNotNull(context.sentiment.message)
+        assertEquals(0, fakeNewsProvider.callCount)
+    }
+
+    @Test
+    fun `a sparsely-covered forex pair degrades signals to NO_DATA just like a sparse stock would`() {
+        fakeMarketDataProvider.candlesToReturn = candleFixture("USD/CAD", 50)
+
+        val context = marketIntelligenceService.getContext("usd/cad")
+
+        assertEquals(ContextSectionStatus.AVAILABLE, context.marketData.status)
+        assertEquals(ContextSectionStatus.AVAILABLE, context.technicalAnalysis.status)
+        assertEquals(ContextSectionStatus.NO_DATA, context.signals.status)
+        assertNull(context.signals.data)
+    }
+
+    @Test
+    fun `a stock symbol never populates instrument information`() {
+        fakeMarketDataProvider.candlesToReturn = candleFixture("MISTOCK", 60)
+        fakeFundamentalDataProvider.companyProfileToReturn = defaultCompanyProfile()
+
+        val context = marketIntelligenceService.getContext("MISTOCK")
+
+        assertEquals(AssetType.STOCK, context.assetType)
+        assertEquals(ContextSectionStatus.NO_DATA, context.instrumentInformation.status)
+        assertNull(context.instrumentInformation.data)
     }
 
     @Test

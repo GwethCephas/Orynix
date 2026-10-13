@@ -70,6 +70,27 @@ class MarketIntelligenceControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `a forex pair is accepted end-to-end through the controller with a slash in the symbol`() {
+        val auth = register("market-intelligence-forex@example.com")
+        fakeMarketDataProvider.candlesToReturn = candleFixture("EUR/USD", 60)
+
+        mockMvc.get("/api/v1/market-intelligence") {
+            param("symbol", "EUR/USD")
+            header("Authorization", "Bearer ${auth.accessToken}")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.symbol") { value("EUR/USD") }
+            jsonPath("$.assetType") { value("FOREX") }
+            jsonPath("$.marketData.status") { value("AVAILABLE") }
+            jsonPath("$.companyInformation.status") { value("NO_DATA") }
+            jsonPath("$.instrumentInformation.status") { value("AVAILABLE") }
+            jsonPath("$.instrumentInformation.data.baseCurrency") { value("EUR") }
+            jsonPath("$.news.status") { value("NO_DATA") }
+            jsonPath("$.sentiment.status") { value("NO_DATA") }
+        }
+    }
+
+    @Test
     fun `unauthenticated request is rejected`() {
         mockMvc.get("/api/v1/market-intelligence") {
             param("symbol", "AAPL")

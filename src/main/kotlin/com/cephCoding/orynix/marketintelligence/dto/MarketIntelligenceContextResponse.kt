@@ -10,22 +10,26 @@ import java.time.Instant
 
 data class MarketIntelligenceContextResponse(
     val symbol: String,
+    val assetType: String,
     val asOf: Instant,
     val marketData: ContextSectionResponse<MarketDataSummaryResponse>,
     val technicalAnalysis: ContextSectionResponse<TechnicalAnalysisResponse>,
     val signals: ContextSectionResponse<TechnicalSignalSummaryResponse>,
     val companyInformation: ContextSectionResponse<FundamentalAnalysisResponse>,
+    val instrumentInformation: ContextSectionResponse<ForexInstrumentInfoResponse>,
     val news: ContextSectionResponse<NewsResponse>,
     val sentiment: ContextSectionResponse<SentimentAggregateResponse>,
 ) {
     companion object {
         fun from(context: MarketIntelligenceContext) = MarketIntelligenceContextResponse(
             symbol = context.symbol,
+            assetType = context.assetType.name,
             asOf = context.asOf,
             marketData = ContextSectionResponse.from(context.marketData, MarketDataSummaryResponse::from),
             technicalAnalysis = ContextSectionResponse.from(context.technicalAnalysis, TechnicalAnalysisResponse::from),
             signals = ContextSectionResponse.from(context.signals, TechnicalSignalSummaryResponse::from),
             companyInformation = ContextSectionResponse.from(context.companyInformation, FundamentalAnalysisResponse::from),
+            instrumentInformation = ContextSectionResponse.from(context.instrumentInformation, ForexInstrumentInfoResponse::from),
             news = ContextSectionResponse.from(context.news, NewsResponse::from),
             sentiment = ContextSectionResponse.from(context.sentiment, SentimentAggregateResponse::from),
         )

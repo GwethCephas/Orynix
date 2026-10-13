@@ -1,6 +1,6 @@
 package com.cephCoding.orynix.market.service
 
-import com.cephCoding.orynix.common.exception.InvalidSymbolException
+import com.cephCoding.orynix.instrument.InstrumentResolver
 import com.cephCoding.orynix.market.domain.Candle
 import com.cephCoding.orynix.market.domain.CandleTimeframe
 import com.cephCoding.orynix.market.model.MarketDataCandle
@@ -17,14 +17,21 @@ class MarketDataService(
     private val marketDataProvider: MarketDataProvider,
     private val repository: MarketDataCandleRepository,
 ) {
+    /**
+     * [InstrumentResolver] resolves both the asset type and the provider-specific ticker (e.g.
+     * "EUR/USD" -> "C:EURUSD" for forex); the provider is called with `providerSymbol` but every
+     * persisted/returned `Candle.symbol` is normalized back to `displaySymbol` so Massive's ticker
+     * format never leaks past this method — see CLAUDE.md Section 6's forex extension.
+     */
     fun getDailyCandles(symbolRaw: String, timeframeCode: String): List<Candle> {
-        val symbol = validateSymbol(symbolRaw)
+        val instrument = InstrumentResolver.resolve(symbolRaw)
         val timeframe = CandleTimeframe.fromCode(timeframeCode)
         val to = LocalDate.now()
         val from = to.minusDays(LOOKBACK_DAYS)
 
-        val fetched = marketDataProvider.fetchDailyCandles(symbol, from, to)
-        persistNewCandles(symbol, timeframe, fetched)
+        val fetched = marketDataProvider.fetchDailyCandles(instrument.providerSymbol, from, to)
+            .map { it.copy(symbol = instrument.displaySymbol) }
+        persistNewCandles(instrument.displaySymbol, timeframe, fetched)
 
         return fetched
     }
@@ -52,16 +59,7 @@ class MarketDataService(
         }
     }
 
-    private fun validateSymbol(symbolRaw: String): String {
-        val symbol = symbolRaw.trim().uppercase()
-        if (!SYMBOL_PATTERN.matches(symbol)) {
-            throw InvalidSymbolException(symbolRaw)
-        }
-        return symbol
-    }
-
     companion object {
         private const val LOOKBACK_DAYS = 365L
-        private val SYMBOL_PATTERN = Regex("^[A-Z.]{1,10}$")
     }
 }

@@ -35,24 +35,38 @@ Android / Web
 
 - Authentication — **implemented** (register, login, refresh, logout)
 - User management — **implemented** (`/api/v1/users/me` only)
-- Market data — **implemented** (historical daily OHLCV candles via Massive, see Section 6)
-- Technical analysis — **implemented** (on-demand indicators computed from candles, see Section 7)
+- Market data — **implemented** (historical daily OHLCV candles via Massive, see Section 6).
+  Covers both stocks and forex spot pairs — see Section 6's forex extension.
+- Technical analysis — **implemented** (on-demand indicators computed from candles, see Section 7).
+  Asset-agnostic; works identically for forex, see Section 7's forex note.
 - AI agents — not implemented
 - News analysis — **implemented** (persisted, symbol-scoped news retrieval via Massive, see
-  Section 10)
+  Section 10). **Stocks only** — forex news is not available under the current Massive plan,
+  verified live; see Section 10's forex extension.
 - Sentiment analysis — **implemented** (FinBERT via Hugging Face Inference API, per-article cached,
-  symbol-level aggregation, see Section 11)
+  symbol-level aggregation, see Section 11). **Stocks only**, for the same reason as news.
 - Prediction — not implemented
 - Risk management — not implemented
-- Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8)
-- Fundamentals — **implemented** (on-demand company information only via Massive, see Section 9)
+- Signals — **implemented** (deterministic indicator-derived condition signals, see Section 8).
+  Asset-agnostic; works identically for forex, with one documented caveat about forex volume
+  semantics — see Section 8's forex note.
+- Fundamentals — **implemented** (on-demand company information only via Massive, see Section 9).
+  **Stocks only** — forex pairs have no company/exchange/market-cap equivalent; see Section 9's
+  forex note and the separate forex instrument-information path in Section 17.
 - Market Intelligence Context — **implemented** (deterministic orchestration of the six capabilities
-  above into one per-symbol snapshot with per-section partial-failure handling, see Section 17)
+  above into one per-symbol snapshot with per-section partial-failure handling, see Section 17).
+  Asset-aware: forex requests get `instrumentInformation` instead of `companyInformation`, and
+  `news`/`sentiment` are pinned to NO_DATA with an honest message rather than attempted.
+- Instrument resolution — **implemented** (asset-type classification and symbol normalization
+  shared across market data, fundamentals, and Market Intelligence Context — see Section 6's forex
+  extension and the `instrument/` package in Section 12).
 - Portfolio — not implemented
 - Backtesting — not implemented
 - Paper trading — not implemented
 - Notifications — not implemented
 - WebSockets / live updates — not implemented
+- Crypto — not implemented and out of scope for the forex work described above; forex was added
+  as a second asset class, crypto was not.
 
 Do not write code as if unimplemented capabilities already exist. Do not add infrastructure
 (message queues, caches, websockets, microservices) in anticipation of them.
@@ -287,8 +301,9 @@ logging.
 `persistNewCandles` to query `MarketDataCandleRepository.findBySymbolAndTimeframeAndTimestampIn`
 for timestamps already persisted for that symbol/timeframe, filter the fetched list down to
 genuinely new candles, and `saveAllAndFlush` them, before returning the full fetched list (not just
-what was newly inserted) either way. Symbol input is trimmed and uppercased before both the
-provider call and the dedup check, so `aapl` and `AAPL` can't produce two rows.
+what was newly inserted) either way. Symbol input is trimmed, uppercased, and classified by
+`InstrumentResolver` (see the forex extension below) before both the provider call and the dedup
+check, so `aapl` and `AAPL` can't produce two rows.
 
 **Concurrency fix (race condition, fixed after being reproduced live)**: the dedup check above is a
 read-then-write race — on a symbol/timeframe's first-ever fetch, two concurrent requests can each
@@ -311,6 +326,43 @@ provider-backed persist-after-fetch flow rather than waiting to rediscover the r
 (`@ConfigurationProperties(prefix = "massive")`, registered through `@ConfigurationPropertiesScan`
 on `OrynixApplication` — see Section 3's Boot 4 module note for why this class must not also be
 `@Component`).
+
+### Forex extension
+
+Market data covers forex spot pairs as well as stocks, using the **same endpoint and the same
+`Candle`/`MarketDataCandle`/`CandleResponse` types** — no new REST endpoint, no new table, no
+migration. Verified live against the real Massive API (not assumed) for all 7 required pairs
+(EUR/USD, GBP/USD, USD/JPY, USD/CHF, AUD/USD, USD/CAD, NZD/USD): Massive's forex aggregates
+endpoint is the identical `GET /v2/aggs/ticker/{ticker}/range/1/day/{from}/{to}` shape stocks use,
+just with a `C:` ticker prefix and no slash (e.g. `C:EURUSD`); each pair returned ~340 real daily
+candles over a 400-day window.
+
+**`instrument/` package** (new, shared — see Section 12) is the single place a raw symbol string is
+classified and normalized: `InstrumentResolver.resolve(symbolRaw)` returns an `Instrument`
+(`assetType: STOCK|FOREX`, `displaySymbol`, `providerSymbol`, and `baseCurrency`/`quoteCurrency` for
+forex). "AAPL" resolves to a STOCK instrument where `displaySymbol == providerSymbol`; "EUR/USD"
+resolves to a FOREX instrument with `displaySymbol = "EUR/USD"` and `providerSymbol = "C:EURUSD"`.
+This replaces the stock-only regex that used to be duplicated independently in
+`MarketDataService`/`MarketIntelligenceService` (Section 9 had deliberately kept that duplication
+for "four lines of code" — forex is the second concrete need, per Section 4's bar, that now
+justifies sharing it). Resolution is deliberately permissive, matching the old regex's philosophy:
+a syntactically well-formed pair Massive has no data for still resolves and only fails later, at the
+provider call, exactly like an unknown stock ticker does today — `InstrumentResolver` does not gate
+on any curated pair list (that list is a frontend discovery aid only, see `forexUniverse.js` in
+Section 16).
+
+`MarketDataService.getDailyCandles` calls `MarketDataProvider.fetchDailyCandles` with
+`instrument.providerSymbol` (so Massive always sees its own ticker format), then
+`.map { it.copy(symbol = instrument.displaySymbol) }`s the result before persisting/returning —
+Massive's ticker format never leaks into a persisted row or an API response.
+`MarketDataProvider`/`MassiveMarketDataProvider`/`FakeMarketDataProvider` needed **zero changes**:
+the interface already treated its `symbol` parameter as an opaque string handed straight to
+Massive's URL template, which is exactly what a provider-format ticker like `C:EURUSD` still is.
+
+**Verified end-to-end against the running backend**, not just unit-tested: a live
+`GET /api/v1/market-intelligence?symbol=EUR%2FUSD` request returned real Massive-sourced candles,
+technical analysis, and signals under `"symbol":"EUR/USD"` — confirming the `/` survives URL
+encoding through Spring's request handling and the display symbol is used consistently throughout.
 
 **Not yet implemented** (do not build ahead of a concrete task, per Section 2): other timeframes
 (weekly/hourly/etc. — `CandleTimeframe` has only `DAILY` today), optional `from`/`to` query params,
@@ -393,6 +445,12 @@ every indicator series here gains exactly one element per extra candle, so one m
 the single-value floor guarantees a "previous" value exists for every indicator, not just the one
 (SMA50) driving the floor itself.
 
+**Forex note**: `TechnicalAnalysisService` needed **zero code changes** to support forex — it only
+ever receives `Candle` objects from `MarketDataService.getDailyCandles` and operates on their
+OHLCV fields generically, with no symbol-format or asset-type assumption anywhere in its logic.
+Verified live: `GET /technical-analysis?symbol=EUR%2FUSD` returns real SMA/EMA/RSI/MACD/Bollinger/
+ATR/volume values computed from real forex candles.
+
 ## 8. Signal & pattern analysis architecture
 
 Implemented: a deterministic layer that turns technical-analysis indicators into structured,
@@ -439,6 +497,19 @@ All thresholds above are `private const val`s in `SignalAnalysisService`'s compa
 same convention `TechnicalAnalysisService` already uses for its period constants, not a new
 `@ConfigurationProperties` class (`MassiveProperties` remains the only one, reserved for
 secrets/environment-varying values).
+
+**Forex note — VOLUME signal semantics, a documented caveat rather than a code change**:
+`SignalAnalysisService` needed **zero code changes** for forex, same as `TechnicalAnalysisService`
+— all eight rules operate generically on indicator values with no asset-type branch. This is
+deliberate even for VOLUME: Massive's forex aggregates' `v` field is **quote-derived (an activity
+count from Massive's own data feed), not centralized exchange-traded volume** the way a stock's
+`v` is. The VOLUME signal is still computed identically for forex — the ratio
+`latestVolume / volumeSma20` is well-defined regardless of what `v` represents — but it does **not**
+mean the same thing it means for a stock, and nothing in the API response currently flags that
+difference. Treat VOLUME (and `volumeSma20`/`volumeChangePercent` in Section 7's technical
+analysis) as a relative-activity measure for forex, not a liquidity/exchange-volume measure, when
+reasoning about or displaying it. Revisit this if a future task needs the distinction surfaced to
+the user explicitly (e.g. a response field or UI caveat) rather than documented here.
 
 **`strength`, `metadata`, and a per-signal `timestamp` are all omitted** from the `Signal` domain
 type: none of the eight rules yield an objectively-justifiable strength score from the available
@@ -520,6 +591,18 @@ REST DTOs with the same `companion object { from(domain) }` idiom used everywher
 **Not yet implemented** (do not build ahead of a concrete task, per Section 2): valuation,
 profitability, growth, balance-sheet, and cash-flow categories (blocked by entitlement, see
 above), any AI/LLM involvement, and any BUY/SELL recommendation or scoring derived from this data.
+
+**Forex note**: `FundamentalAnalysisService`/`MassiveFundamentalDataProvider`/`CompanyProfile`/
+`/api/v1/fundamentals` are **unchanged and remain stock-only**. The service's own local symbol
+regex (still `^[A-Z.]{1,10}$`, deliberately *not* switched to `InstrumentResolver`) means a forex
+pair like `EUR/USD` continues to 400 with `InvalidSymbolException` here, exactly as it would for
+any other malformed input — this is correct, not a gap: a currency pair has no exchange, industry,
+or market-capitalization to report, so there is nothing for this endpoint to return for forex, and
+it must never be called with a forex symbol (`MarketIntelligenceService` only calls it for STOCK
+instruments — see Section 17). The forex analogue — `ForexInstrumentInfo`, built from static
+curated data, no Massive call — lives in `marketintelligence/domain/` and is only ever surfaced
+through the Market Intelligence Context's `instrumentInformation` section (Section 17), not through
+a standalone endpoint, since there is no per-pair "fundamentals" concept to expose on its own.
 
 ## 10. News intelligence architecture
 
@@ -621,6 +704,18 @@ this.
 involvement, any news endpoint beyond `GET .../news`, and any prediction/recommendation derived
 from news content. Sentiment analysis (which also does not use the `insights` field discovered
 above) is implemented — see Section 11.
+
+**Forex note — a genuine provider limitation, verified live, not assumed**: `NewsService`/
+`MassiveNewsProvider`/`/api/v1/news` are **unchanged**, and forex news is **not available** under
+the current Massive plan. Verified directly against `https://api.massive.com`'s
+`GET /v2/reference/news` with `ticker=C:EURUSD`, `ticker=EURUSD`, and `ticker=GBPUSD` — every forex
+ticker format tried returned `"results": []`, while the identical query with `ticker=AAPL` returned
+real articles. This is a provider-side gap, not a query-format bug on Orynix's side: there was no
+format left to try. `MarketIntelligenceService` acts on this directly — for a FOREX instrument, the
+`news` section is set to NO_DATA with a fixed, honest message *without even calling*
+`NewsService.getNews` (see Section 17), rather than spending a call known in advance to return
+nothing. If Massive adds forex news coverage to this plan in the future, re-verify before changing
+this — don't assume the gap has closed.
 
 ## 11. Sentiment analysis architecture
 
@@ -773,6 +868,13 @@ constructor-binding-conflict reason, see Section 3).
 involvement, prediction, and trading recommendations derived from sentiment — this layer reports
 classified sentiment and a deterministic aggregate, nothing more.
 
+**Forex note**: `SentimentService`/`HuggingFaceSentimentAnalyzer`/`/api/v1/news/.../sentiment` are
+**unchanged**. Sentiment is computed over news articles, and Section 10's forex extension already
+establishes there are none for forex under the current plan — there is nothing for this layer to
+analyze, so it was never modified. `MarketIntelligenceService` mirrors the news section's handling:
+a FOREX instrument's `sentiment` section is set to NO_DATA with a fixed message without calling
+`SentimentService.getAggregate` at all (see Section 17).
+
 ## 12. Package structure
 
 Root package: `com.cephCoding.orynix`.
@@ -796,6 +898,9 @@ com.cephCoding.orynix
     repository/    UserRepository
     model/         User entity
     dto/           UserResponse
+  instrument/
+    domain/         AssetType, Instrument (asset-type classification + symbol normalization)
+    (root)          InstrumentResolver, ForexPairCatalog
   market/
     controller/    MarketDataController
     service/       MarketDataService (fetch + dedup + persist)
@@ -852,9 +957,9 @@ com.cephCoding.orynix
     controller/    MarketIntelligenceController
     service/       MarketIntelligenceService (orchestrates the six services above)
     domain/         ContextSection, ContextSectionStatus, MarketDataSummary,
-                     MarketIntelligenceContext
+                     MarketIntelligenceContext, ForexInstrumentInfo
     dto/            ContextSectionResponse, MarketDataSummaryResponse,
-                     MarketIntelligenceContextResponse
+                     MarketIntelligenceContextResponse, ForexInstrumentInfoResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -878,10 +983,22 @@ patterns because it needs both, not a new one. `sentiment/` has the same `domain
 `model/`+`repository/` combination as `news/`, for the same reason — but its interface subpackage is
 named `analyzer/` rather than `provider/`, since the project names subpackages after the abstraction
 they hold (compare `rule/` vs `indicator/`, two differently-named external-free abstractions over
-the same kind of input), and this one holds a `SentimentAnalyzer`, not a `*DataProvider`. `marketintelligence/` has `domain/`+`dto/` only (no `provider/`/`model/`/`repository/`/`analyzer/`)
-— unlike every other feature so far, it introduces no new external provider and persists nothing of
-its own; it exists purely to orchestrate the six services above, so it only needs the seam between
-its own assembled result and its REST DTO (see Section 17).
+the same kind of input), and this one holds a `SentimentAnalyzer`, not a `*DataProvider`. `marketintelligence/` has `domain/`+`dto/` plus `ForexInstrumentInfo`/`ForexInstrumentInfoResponse`
+(no `provider/`/`model/`/`repository/`/`analyzer/`) — unlike every other feature so far, it
+introduces no new external provider and persists nothing of its own; it exists purely to orchestrate
+the six services above plus forex instrument metadata, so it only needs the seam between its own
+assembled result and its REST DTO (see Section 17). `instrument/` is new and deliberately **not**
+feature-shaped (no `controller/`/`service/`/`dto/` — it has no REST endpoint of its own): it is
+shared infrastructure, consumed by `market/`, `fundamentals/` (indirectly, via
+`MarketIntelligenceService` choosing whether to call it), and `marketintelligence/` itself.
+`InstrumentResolver` and `ForexPairCatalog` sit at the package root as plain Kotlin `object`s
+(no Spring annotation — there is no provider/HTTP call or state to manage, just pure functions),
+with only the `AssetType`/`Instrument` value types pulled into a `domain/` subpackage, mirroring
+`market/domain/`'s role. This is a deliberate reversal of Section 9's "don't share a validator for
+four lines of code" precedent: forex is the second concrete need (after stocks) for the *same*
+symbol-classification logic, which is exactly the bar Section 4 sets for introducing a shared
+abstraction — the old duplicated regexes in `MarketDataService`/`MarketIntelligenceService` were
+removed in favor of this one place.
 
 Future
 features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
@@ -1038,6 +1155,9 @@ web/
   stockUniverse.js   static, hand-curated list of a few well-known {symbol, name} pairs (see the
                      stock picker dropdown note below) — not fetched, since the backend exposes no
                      symbol-search/watchlist/instrument-search endpoint; not a whitelist either
+  forexUniverse.js   the forex analogue of stockUniverse.js — 7 curated {symbol, name} pairs (see
+                     the forex note below), each verified live against Massive's aggregates
+                     endpoint (not fundamentals — forex has no equivalent)
   chart.js           hand-rolled canvas price chart: candlesticks + volume strip + hover tooltip
                      + a client-side 1M/3M/6M/1Y/All range selector that slices the already-
                      fetched candle array (no extra requests); falls back to a line/area render
@@ -1143,6 +1263,31 @@ yet, which is `overview.js`'s whole purpose. `overview.js`'s pre-existing hardco
 chips were left as-is; they're a duplicate of a strict subset of this feature, but removing them
 wasn't asked for and isn't necessary for this to work.
 
+**Forex extension — an asset-class tab inside the existing picker, not a second control.**
+`stockPickerDropdown.js` (kept its filename/export name for minimal churn, despite now browsing
+more than stocks) gained a "Stocks"/"Forex" tab row at the top of its panel, switching between
+`STOCK_UNIVERSE` and the new `FOREX_UNIVERSE` for both the list and the name-filter's search scope;
+the trigger/panel/search/list skeleton, mutual exclusion with the signal filter dropdown, and the
+`submitSymbol`/`onSelect` wiring are all unchanged and shared by both tabs. `format.js`'s
+`isValidSymbol` now accepts either `^[A-Z.]{1,10}$` (stock) or `^[A-Z]{3}/[A-Z]{3}$` (forex) —
+mirroring `InstrumentResolver`'s backend pattern — and `isForexSymbol`/`formatPrice` give forex
+quotes the decimal precision (4 places) and absence of a `$` prefix they need (a pair like USD/JPY
+has no single "the" currency to prefix with anyway); `chart.js`'s `setChartCandles` now takes an
+optional price-formatter argument (defaults to the existing `formatCurrency`) so the price axis and
+OHLC tooltip use the right formatter without `chart.js` needing any symbol-format awareness of its
+own. `initChart` resets both `allCandles` and `priceFormatter` to their defaults on every call —
+without this, navigating from a forex pair to a stock (or back) would briefly render the *previous*
+symbol's stale candles under the *new* symbol's price formatter (or vice versa) during the window
+between mount and the new candles arriving, since `ResizeObserver`/theme-change can trigger a
+`render()` before `setChartCandles` is called with fresh data. `company.js` branches on `context.assetType`: FOREX renders `context.instrumentInformation`
+(pair, base/quote currency, description) instead of `context.companyInformation`, which the backend
+already pins to NO_DATA for forex (Section 17) — `news.js`/`signals.js` needed **no equivalent
+branch**, since `contextSection.js`'s existing NO_DATA rendering already surfaces the backend's
+honest "not available for forex" message for `news`/`sentiment` with no frontend code change at all.
+`router.js`/`state.js`/`api.js` needed **no changes** — `encodeURIComponent`/`URLSearchParams`
+already round-trip a symbol containing `/` correctly, verified by hitting the running backend
+directly with both a raw and `%2F`-encoded `EUR/USD` query parameter.
+
 **The signal filter dropdown filters the current symbol's signals; it does not discover stocks
 across a market, because the backend has no capability to do that.** `SignalAnalysisController`
 (Section 8) takes a single required `symbol` and always computes all 8 `SignalType` values fresh
@@ -1218,8 +1363,16 @@ page, not as two different pages each showing their own HTTP error.
 Jest/Vitest/etc.) — this is intentional per Section 2/3's "don't add infrastructure speculatively";
 verification is manual (load the app, exercise each page, check the console/network tab). There is
 no symbol-autocomplete endpoint, so the symbol search has nothing to debounce against — it
-validates and submits on enter/click only, against the same `^[A-Z.]{1,10}$` pattern the backend
-uses.
+validates and submits on enter/click only, against the same stock/forex patterns the backend uses
+(see the forex extension above). The forex frontend changes above were verified by: running the
+modified modules under Node to execute the pure logic directly (`isValidSymbol`, `isForexSymbol`,
+`formatPrice`, the `FOREX_UNIVERSE` data) and confirm correct output against real EUR/USD-shaped
+input; syntax-checking every modified file; and code review of the DOM-manipulation code
+(`stockPickerDropdown.js`'s tab switching, `company.js`'s branch, `chart.js`'s formatter plumbing).
+Full interactive browser verification (clicking through the picker's new tab, visually confirming
+the chart axis/tooltip decimals) was **not** performed in this session — no browser-automation
+tool was available — and should be done manually before relying on this in production; the
+backend behavior it depends on was independently verified live end-to-end (Section 17).
 
 ## 17. Market Intelligence Context
 
@@ -1233,17 +1386,20 @@ services already compute.
 
 ```
 MarketIntelligenceService
-  -> MarketDataService          (candle summary)
-  -> TechnicalAnalysisService   (indicators)
-  -> SignalAnalysisService      (conditions)
-  -> FundamentalAnalysisService (company info)
-  -> NewsService                (articles)
-  -> SentimentService           (aggregate sentiment)
+  -> InstrumentResolver          (asset-type classification — STOCK or FOREX)
+  -> MarketDataService           (candle summary)
+  -> TechnicalAnalysisService    (indicators)
+  -> SignalAnalysisService       (conditions)
+  -> FundamentalAnalysisService  (company info — STOCK only)
+  -> ForexPairCatalog             (instrument info — FOREX only, no provider call)
+  -> NewsService                 (articles — STOCK only)
+  -> SentimentService            (aggregate sentiment — STOCK only)
 ```
 
 **Package layout** (`marketintelligence/`) follows the base `controller/service/domain/dto` shape —
 no `provider/model/repository`, since nothing new is persisted and no new external provider is
-introduced; this feature only orchestrates six already-existing services.
+introduced; this feature only orchestrates six already-existing services (plus `ForexPairCatalog`'s
+static data for forex).
 
 **Partial-failure model, not all-or-nothing.** Each section is wrapped in
 `ContextSection<T>(status, data, message, retrievedAt)`, where `status` is one of `AVAILABLE`,
@@ -1254,10 +1410,11 @@ introduced; this feature only orchestrates six already-existing services.
   `InvalidNewsLimitException`, since timeframe is hardcoded and limit is never user-supplied — see
   below) are **not caught** — they mean the request itself is malformed, not that one section's
   data happens to be unavailable, so they propagate to `GlobalExceptionHandler`'s existing 400
-  mapping and fail the whole request. Symbol is validated/normalized once, at the top of the
-  service, before any section runs (same regex this codebase already duplicates in
-  `FundamentalAnalysisService`/`NewsService` rather than sharing a validator — see Section 9's
-  precedent for why).
+  mapping and fail the whole request. The symbol is resolved to an `Instrument` once, at the top of
+  the service, via `InstrumentResolver` (Section 6's forex extension) before any section runs —
+  this *replaced* the local stock-only regex this service used to duplicate independently (Section
+  9's "don't share a validator for four lines of code" precedent no longer held once forex gave the
+  same classification logic a second concrete caller — see Section 12).
 - `InsufficientCandleDataException`, `CompanyNotFoundException` → `NO_DATA` — a successful lookup
   that legitimately found nothing or not enough.
 - `MarketDataProviderException`, `FundamentalDataProviderException`, `NewsDataProviderException`,
@@ -1328,7 +1485,46 @@ has only one value today, see Section 6) and `limit` for news/sentiment (both ca
 which each service already defaults to 20 internally, see Sections 10–11). Adding either would be
 implementable but serves no concrete need yet, per Section 2's "don't build ahead of a stated task."
 
+### Forex extension
+
+The response gained two additive, backward-compatible fields: a top-level `assetType`
+(`"STOCK"`/`"FOREX"`) and a new `instrumentInformation` section
+(`ContextSectionResponse<ForexInstrumentInfoResponse>`), the forex mirror of
+`companyInformation`. Every existing field a STOCK client already reads is **unchanged** — verified
+live (`GET /market-intelligence?symbol=AAPL`) that `assetType` is `"STOCK"`,
+`companyInformation.status` is `"AVAILABLE"` with the real company payload, `news`/`sentiment` are
+`"AVAILABLE"`, and `instrumentInformation.status` is a fixed `"NO_DATA"` — i.e. nothing a stock
+caller already depended on moved or changed shape.
+
+For a FOREX instrument (verified live, `GET /market-intelligence?symbol=EUR%2FUSD`):
+
+- `marketData`/`technicalAnalysis`/`signals` work exactly as for a stock — `AVAILABLE`, with real
+  Massive-sourced candles/indicators/signals under `"symbol":"EUR/USD"` (never the provider ticker
+  format).
+- `companyInformation` is `NO_DATA` with a fixed message ("Company information is not applicable
+  for this instrument") — `FundamentalAnalysisService` is **never called** for a FOREX instrument
+  (Section 9: it must never be called with a forex symbol in the first place).
+- `instrumentInformation` is `AVAILABLE`, built from `ForexInstrumentInfo` (display symbol,
+  base/quote currency, a curated or generic description via `ForexPairCatalog` — Section 9) — no
+  provider call, pure static data.
+- `news`/`sentiment` are **pinned to `NO_DATA`** with fixed, honest messages ("...is not available
+  for forex pairs under the current data provider integration") **without calling
+  `NewsService`/`SentimentService` at all** — unlike every other NO_DATA case in this service, which
+  results from a call that ran and came back empty, these two are skipped outright because Section
+  10's live verification already established the call would always return nothing. This is a
+  deliberate deviation from the "NO_DATA means we tried and found nothing" pattern used everywhere
+  else in this service, made specifically because the alternative (calling a provider known in
+  advance to be empty, for every forex request, forever) has no upside — document this if a future
+  reader is tempted to "fix" it into a real call for consistency.
+
+`companyInformationSection`/`instrumentInformationSection`/`newsSection`/`sentimentSection` are
+small private helper methods (one per asset-type-conditional section) rather than folding the
+branch into `runSection` itself, since `runSection`'s whole contract is "a fetch was attempted and
+mapped" — a section that is unconditionally NO_DATA by asset type was never going to attempt one.
+
 **Not yet implemented** (do not build ahead of a concrete task, per Section 2): the actual AI
 Analyst Agent and any LLM involvement, price prediction, trading recommendations, candle-fetch
-deduplication across market data/technical analysis/signals, and any async/polling response shape
-for cold-request latency.
+deduplication across market data/technical analysis/signals, any async/polling response shape
+for cold-request latency, crypto or any other asset class beyond stocks and forex, and any
+UI-facing flag distinguishing forex's quote-derived volume from a stock's exchange volume (see
+Section 8's forex note — currently a documented caveat, not a response field).

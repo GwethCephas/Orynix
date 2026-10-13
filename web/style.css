@@ -569,6 +569,30 @@ button {
   color: var(--fg);
 }
 
+.stock-picker-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.stock-picker-tab {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.stock-picker-tab.active {
+  background: var(--accent, #5b9dff);
+  border-color: var(--accent, #5b9dff);
+  color: #fff;
+  font-weight: 600;
+}
+
 .stock-picker-scope {
   color: var(--muted);
   font-size: 12px;
