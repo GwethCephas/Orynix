@@ -2,7 +2,7 @@ import { getCandles, getMarketIntelligence } from "../api.js";
 import { getCurrentSymbol, withCache, invalidateCached } from "../state.js";
 import { createSectionState, loadInto, renderStateBlock } from "../components/stateBlock.js";
 import { renderContextSection } from "../components/contextSection.js";
-import { deriveAssetHeader, formatCurrency, formatNumber, formatPercent, formatDate, formatDateTime, escapeHtml } from "../format.js";
+import { deriveAssetHeader, formatPrice, isForexSymbol, formatNumber, formatPercent, formatDate, formatDateTime, escapeHtml } from "../format.js";
 import { initChart, setChartCandles, setChartRange, RANGE_OPTIONS } from "../chart.js";
 
 const TA_GROUPS = [
@@ -114,10 +114,10 @@ export function mount(container) {
         const changeText =
           header.delta === null
             ? "N/A"
-            : `${header.delta >= 0 ? "+" : ""}${formatNumber(header.delta)} (${formatPercent(header.deltaPercent)})`;
+            : `${header.delta >= 0 ? "+" : ""}${formatNumber(header.delta, isForexSymbol(symbol) ? 4 : 2)} (${formatPercent(header.deltaPercent)})`;
         assetHeaderEl.innerHTML = `
           <div class="asset-symbol">${escapeHtml(symbol)}</div>
-          <div class="asset-price">${formatCurrency(header.latestClose)}</div>
+          <div class="asset-price">${formatPrice(header.latestClose, symbol)}</div>
           <div class="asset-change ${changeClass}">${changeText}</div>
           <div class="asset-asof">Daily close as of ${formatDate(header.timestamp)} &middot; historical data, not real-time</div>`;
       },
@@ -130,7 +130,7 @@ export function mount(container) {
       onRetry: () => loadCandles(true),
       renderContent: (candles, el) => {
         el.innerHTML = "";
-        setChartCandles(candles);
+        setChartCandles(candles, (value) => formatPrice(value, symbol));
       },
     });
     if (candlesSection.value.status === "loading") {

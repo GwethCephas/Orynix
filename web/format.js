@@ -171,6 +171,30 @@ export function formatSentimentScore(score) {
   return `${sign}${num.toFixed(2)}`;
 }
 
+const STOCK_SYMBOL_PATTERN = /^[A-Z.]{1,10}$/;
+const FOREX_SYMBOL_PATTERN = /^[A-Z]{3}\/[A-Z]{3}$/;
+
 export function isValidSymbol(symbol) {
-  return typeof symbol === "string" && /^[A-Z.]{1,10}$/.test(symbol);
+  return typeof symbol === "string" && (STOCK_SYMBOL_PATTERN.test(symbol) || FOREX_SYMBOL_PATTERN.test(symbol));
+}
+
+// A forex display symbol is the only shape in Orynix that contains a "/" (e.g. "EUR/USD") — see
+// CLAUDE.md's forex extension. Used purely for display-formatting decisions (decimals, no $
+// prefix); backend asset-type classification is the source of truth and lives in
+// InstrumentResolver, not here.
+export function isForexSymbol(symbol) {
+  return typeof symbol === "string" && symbol.includes("/");
+}
+
+// Forex quotes need more decimal precision than stock prices and have no single universal
+// currency prefix (EUR/USD is priced in USD, USD/JPY in JPY, etc.) — showing "$" on every pair
+// would be actively wrong, so forex prices are shown as a plain, unprefixed number instead.
+export function formatPrice(value, symbol, decimals = 4) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "N/A";
+  }
+  if (isForexSymbol(symbol)) {
+    return Number(value).toFixed(decimals);
+  }
+  return formatCurrency(value);
 }

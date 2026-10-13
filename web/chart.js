@@ -24,6 +24,10 @@ const chartState = {
   themeListener: null,
   mouseMoveHandler: null,
   mouseLeaveHandler: null,
+  // Defaults to the stock "$X.XX" formatter; setChartCandles passes a forex-aware formatter
+  // (4-decimal, no "$") when the symbol being charted is a forex pair — see format.js's
+  // formatPrice/isForexSymbol.
+  priceFormatter: formatCurrency,
 };
 
 function themeColor(name) {
@@ -199,8 +203,8 @@ function drawPriceLabels(ctx, min, max, plotLeft, priceTop, priceBottom) {
   ctx.fillStyle = themeColor("--fg");
   ctx.font = "11px sans-serif";
   ctx.textAlign = "right";
-  ctx.fillText(formatCurrency(max), plotLeft - 6, priceTop + 10);
-  ctx.fillText(formatCurrency(min), plotLeft - 6, priceBottom);
+  ctx.fillText(chartState.priceFormatter(max), plotLeft - 6, priceTop + 10);
+  ctx.fillText(chartState.priceFormatter(min), plotLeft - 6, priceBottom);
 }
 
 function render() {
@@ -265,10 +269,10 @@ function handleMouseMove(event) {
   tooltipEl.hidden = false;
   tooltipEl.innerHTML = `
     <div class="chart-tooltip-date">${formatDate(candle.timestamp)}</div>
-    <div class="chart-tooltip-row"><span>O</span><span>${formatCurrency(candle.open)}</span></div>
-    <div class="chart-tooltip-row"><span>H</span><span>${formatCurrency(candle.high)}</span></div>
-    <div class="chart-tooltip-row"><span>L</span><span>${formatCurrency(candle.low)}</span></div>
-    <div class="chart-tooltip-row"><span>C</span><span>${formatCurrency(candle.close)}</span></div>
+    <div class="chart-tooltip-row"><span>O</span><span>${chartState.priceFormatter(candle.open)}</span></div>
+    <div class="chart-tooltip-row"><span>H</span><span>${chartState.priceFormatter(candle.high)}</span></div>
+    <div class="chart-tooltip-row"><span>L</span><span>${chartState.priceFormatter(candle.low)}</span></div>
+    <div class="chart-tooltip-row"><span>C</span><span>${chartState.priceFormatter(candle.close)}</span></div>
     <div class="chart-tooltip-row"><span>Vol</span><span>${formatNumber(candle.volume, 0)}</span></div>
   `;
 
@@ -291,6 +295,12 @@ export function initChart(canvas, tooltipEl) {
 
   chartState.canvas = canvas;
   chartState.tooltipEl = tooltipEl || null;
+  // A fresh mount (e.g. navigating from a forex pair to a stock) must not render the previous
+  // symbol's candles or price formatter for the brief window before the new symbol's candles
+  // arrive — setChartCandles() is only called once loading resolves to "ok", but the
+  // ResizeObserver/theme-change listeners below can trigger a render() before then.
+  chartState.allCandles = [];
+  chartState.priceFormatter = formatCurrency;
 
   chartState.resizeObserver = new ResizeObserver(() => render());
   chartState.resizeObserver.observe(canvas.parentElement || canvas);
@@ -304,8 +314,9 @@ export function initChart(canvas, tooltipEl) {
   canvas.addEventListener("mouseleave", chartState.mouseLeaveHandler);
 }
 
-export function setChartCandles(candles) {
+export function setChartCandles(candles, priceFormatter = formatCurrency) {
   chartState.allCandles = candles ? [...candles].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) : [];
+  chartState.priceFormatter = priceFormatter;
   render();
 }
 

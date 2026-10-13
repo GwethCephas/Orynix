@@ -29,7 +29,7 @@ export function createSymbolSearch({
   function submitSymbol(rawSymbol) {
     const symbol = rawSymbol.trim().toUpperCase();
     if (!isValidSymbol(symbol)) {
-      errorEl.textContent = "Enter a valid symbol (letters/periods, up to 10 characters).";
+      errorEl.textContent = "Enter a valid symbol (e.g. AAPL) or forex pair (e.g. EUR/USD).";
       errorEl.hidden = false;
       return;
     }

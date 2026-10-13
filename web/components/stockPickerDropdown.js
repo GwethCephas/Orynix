@@ -1,17 +1,25 @@
 import { STOCK_UNIVERSE } from "../stockUniverse.js";
+import { FOREX_UNIVERSE } from "../forexUniverse.js";
 import { escapeHtml } from "../format.js";
 
 let instanceCount = 0;
 
-// Trigger + accessible popover for browsing/selecting a stock, anchored next to the symbol search
-// control. STOCK_UNIVERSE is a static, hand-curated list (see stockUniverse.js) — there is no
-// backend symbol-search endpoint to call, so opening/closing and typing in the name filter never
-// hit the network. Mirrors signalFilterDropdown.js's structure (built-once skeleton, only the
-// list's innerHTML is patched on each keystroke) so neither dropdown drops keyboard focus out of
-// its own search input while the user is typing.
+const ASSET_CLASSES = [
+  { key: "STOCK", label: "Stocks", universe: STOCK_UNIVERSE, scope: "A short list of well-known symbols to get started with, searchable by ticker or company name — not a live search across every stock on the market. Any valid ticker still works in the search box above." },
+  { key: "FOREX", label: "Forex", universe: FOREX_UNIVERSE, scope: "A short list of major currency pairs to get started with, searchable by pair or name — not every pair Massive may have data for. Any correctly formatted pair (e.g. EUR/USD) still works in the search box above." },
+];
+
+// Trigger + accessible popover for browsing/selecting an instrument, anchored next to the symbol
+// search control. STOCK_UNIVERSE/FOREX_UNIVERSE are static, hand-curated lists (see
+// stockUniverse.js/forexUniverse.js) — there is no backend symbol-search endpoint to call, so
+// opening/closing, switching the asset-class tab, and typing in the name filter never hit the
+// network. Mirrors signalFilterDropdown.js's structure (built-once skeleton, only the list's
+// innerHTML is patched on each keystroke/tab switch) so neither dropdown drops keyboard focus out
+// of its own search input while the user is typing.
 export function createStockPickerDropdown({ onSelect, onOpen }) {
   const panelId = `stockPickerPanel-${++instanceCount}`;
   let filterText = "";
+  let activeClassKey = ASSET_CLASSES[0].key;
 
   const trigger = document.createElement("button");
   trigger.type = "button";
@@ -19,8 +27,8 @@ export function createStockPickerDropdown({ onSelect, onOpen }) {
   trigger.setAttribute("aria-haspopup", "true");
   trigger.setAttribute("aria-expanded", "false");
   trigger.setAttribute("aria-controls", panelId);
-  trigger.setAttribute("aria-label", "Browse stocks");
-  trigger.innerHTML = `Stocks <span aria-hidden="true">&#9662;</span>`;
+  trigger.setAttribute("aria-label", "Browse stocks or forex pairs");
+  trigger.innerHTML = `Browse <span aria-hidden="true">&#9662;</span>`;
 
   const panel = document.createElement("div");
   panel.className = "stock-picker-panel";
@@ -28,46 +36,63 @@ export function createStockPickerDropdown({ onSelect, onOpen }) {
   panel.hidden = true;
   // No role="dialog": see the identical note in signalFilterDropdown.js — non-modal disclosure
   // popover, no focus trap, so dialog's implied modal semantics would overpromise.
-  panel.setAttribute("aria-label", "Browse stocks");
+  panel.setAttribute("aria-label", "Browse stocks or forex pairs");
   panel.innerHTML = `
     <div class="stock-picker-header">
-      <h3>Browse stocks</h3>
+      <h3>Browse instruments</h3>
       <button type="button" class="stock-picker-close" aria-label="Close">&times;</button>
     </div>
-    <p class="stock-picker-scope">
-      A short list of well-known symbols to get started with, searchable by ticker or company
-      name — not a live search across every stock on the market. Any valid ticker still works in
-      the search box above.
-    </p>
-    <input type="text" class="stock-picker-search" placeholder="Search symbol or company name" aria-label="Search symbol or company name" autocomplete="off">
-    <div class="stock-picker-list" role="group" aria-label="Stocks"></div>
+    <div class="stock-picker-tabs" role="tablist" aria-label="Asset class">
+      ${ASSET_CLASSES.map(
+        (cls) => `<button type="button" class="stock-picker-tab" role="tab" data-class="${cls.key}">${escapeHtml(cls.label)}</button>`
+      ).join("")}
+    </div>
+    <p class="stock-picker-scope"></p>
+    <input type="text" class="stock-picker-search" placeholder="Search symbol or name" aria-label="Search symbol or name" autocomplete="off">
+    <div class="stock-picker-list" role="group" aria-label="Instruments"></div>
   `;
 
+  const scopeEl = panel.querySelector(".stock-picker-scope");
+  const tabsEl = panel.querySelector(".stock-picker-tabs");
   const searchInput = panel.querySelector(".stock-picker-search");
   const listEl = panel.querySelector(".stock-picker-list");
   const closeBtn = panel.querySelector(".stock-picker-close");
 
-  function matchingStocks() {
+  function activeClass() {
+    return ASSET_CLASSES.find((cls) => cls.key === activeClassKey);
+  }
+
+  function matchingItems() {
+    const universe = activeClass().universe;
     const query = filterText.trim().toLowerCase();
-    if (!query) return STOCK_UNIVERSE;
-    return STOCK_UNIVERSE.filter(
-      (stock) => stock.symbol.toLowerCase().includes(query) || stock.name.toLowerCase().includes(query)
+    if (!query) return universe;
+    return universe.filter(
+      (item) => item.symbol.toLowerCase().includes(query) || item.name.toLowerCase().includes(query)
     );
   }
 
+  function renderTabs() {
+    tabsEl.querySelectorAll(".stock-picker-tab").forEach((btn) => {
+      const isActive = btn.dataset.class === activeClassKey;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", String(isActive));
+    });
+  }
+
   function renderList() {
-    const items = matchingStocks();
+    scopeEl.textContent = activeClass().scope;
+    const items = matchingItems();
     listEl.innerHTML = items.length
       ? items
           .map(
-            (stock) => `
-          <button type="button" class="stock-picker-item" data-symbol="${escapeHtml(stock.symbol)}">
-            <span class="stock-picker-item-symbol">${escapeHtml(stock.symbol)}</span>
-            <span class="stock-picker-item-name">${escapeHtml(stock.name)}</span>
+            (item) => `
+          <button type="button" class="stock-picker-item" data-symbol="${escapeHtml(item.symbol)}">
+            <span class="stock-picker-item-symbol">${escapeHtml(item.symbol)}</span>
+            <span class="stock-picker-item-name">${escapeHtml(item.name)}</span>
           </button>`
           )
           .join("")
-      : `<p class="section-status">No stocks match &ldquo;${escapeHtml(filterText)}&rdquo;.</p>`;
+      : `<p class="section-status">No matches for &ldquo;${escapeHtml(filterText)}&rdquo;.</p>`;
 
     listEl.querySelectorAll(".stock-picker-item").forEach((button) => {
       button.addEventListener("click", () => {
@@ -97,6 +122,7 @@ export function createStockPickerDropdown({ onSelect, onOpen }) {
       onOpen?.();
       filterText = "";
       searchInput.value = "";
+      renderTabs();
       renderList();
       document.addEventListener("keydown", onDocumentKeydown);
       document.addEventListener("click", onDocumentClick, true);
@@ -123,6 +149,18 @@ export function createStockPickerDropdown({ onSelect, onOpen }) {
   closeBtn.addEventListener("click", () => {
     setOpen(false);
     trigger.focus();
+  });
+
+  tabsEl.querySelectorAll(".stock-picker-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.class === activeClassKey) return;
+      activeClassKey = btn.dataset.class;
+      filterText = "";
+      searchInput.value = "";
+      renderTabs();
+      renderList();
+      searchInput.focus();
+    });
   });
 
   searchInput.addEventListener("input", () => {
