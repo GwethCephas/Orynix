@@ -131,3 +131,19 @@ export function getMarketIntelligence(symbol) {
     useAuth: true,
   });
 }
+
+export function createBacktest(request) {
+  return apiRequest("/api/v1/backtests", { method: "POST", body: request, useAuth: true });
+}
+
+export function listBacktests() {
+  return apiRequest("/api/v1/backtests", { useAuth: true });
+}
+
+export function getBacktest(backtestId) {
+  return apiRequest(`/api/v1/backtests/${encodeURIComponent(backtestId)}`, { useAuth: true });
+}
+
+export function getBacktestTrades(backtestId) {
+  return apiRequest(`/api/v1/backtests/${encodeURIComponent(backtestId)}/trades`, { useAuth: true });
+}
