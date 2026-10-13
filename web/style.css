@@ -1266,10 +1266,20 @@ button {
 .backtest-field input,
 .backtest-field select {
   background: var(--bg);
+  color: var(--fg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 9px 10px;
   font-size: 14px;
+}
+
+/* Some browsers render a native <select>'s popup list as a separate UI surface that does not
+   inherit color from the closed control, so the option text needs its own explicit color/
+   background - otherwise it can default to a light-on-light or OS-themed render that's unreadable
+   against this app's dark theme. Theme-aware (not a hardcoded #fff) so light mode stays correct too. */
+.backtest-field select option {
+  color: var(--fg);
+  background-color: var(--bg-elevated);
 }
 
 .backtest-field input:focus,
