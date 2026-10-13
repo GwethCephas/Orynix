@@ -61,7 +61,10 @@ Android / Web
   shared across market data, fundamentals, and Market Intelligence Context — see Section 6's forex
   extension and the `instrument/` package in Section 12).
 - Portfolio — not implemented
-- Backtesting — not implemented
+- Backtesting — **implemented** (deterministic, synchronous bar-by-bar simulation over historical
+  daily candles for a moving-average-crossover or an RSI-threshold strategy, long-only, persisted
+  per user, see Section 18). Asset-aware: stock backtests require a USD account currency, forex
+  backtests require the account currency to match the pair's quote currency.
 - Paper trading — not implemented
 - Notifications — not implemented
 - WebSockets / live updates — not implemented
@@ -960,6 +963,16 @@ com.cephCoding.orynix
                      MarketIntelligenceContext, ForexInstrumentInfo
     dto/            ContextSectionResponse, MarketDataSummaryResponse,
                      MarketIntelligenceContextResponse, ForexInstrumentInfoResponse
+  backtesting/
+    controller/    BacktestController
+    service/       BacktestService (validation, warm-up fetch, engine invocation, persistence)
+    engine/         BacktestEngine (the bar-by-bar simulation loop), StrategyAction
+    strategy/       BacktestStrategy interface, MovingAverageCrossoverStrategy, RsiThresholdStrategy
+    domain/         BacktestRun, Trade, EquityPoint, StrategyType, ExitReason, TradeDirection
+    model/          BacktestRunEntity, BacktestTradeEntity, BacktestEquityPointEntity
+    repository/     BacktestRunRepository, BacktestTradeRepository, BacktestEquityPointRepository
+    dto/            BacktestRequest, BacktestResponse, BacktestSummaryResponse,
+                     BacktestDetailResponse, TradeResponse, EquityPointResponse
 ```
 
 Each feature package is self-contained (controller/service/repository/model/dto). This is
@@ -998,10 +1011,17 @@ with only the `AssetType`/`Instrument` value types pulled into a `domain/` subpa
 four lines of code" precedent: forex is the second concrete need (after stocks) for the *same*
 symbol-classification logic, which is exactly the bar Section 4 sets for introducing a shared
 abstraction — the old duplicated regexes in `MarketDataService`/`MarketIntelligenceService` were
-removed in favor of this one place.
+removed in favor of this one place. `backtesting/` follows the base shape plus `engine/`+`strategy/`
+subpackages for the same reason `technicalanalysis/` has `domain/`+`indicator/` and `signals/` has
+`domain/`+`rule/` — `engine/` holds the pure, Spring-free simulation loop (named after the
+abstraction it holds, matching `rule/`/`indicator/`'s naming convention), `strategy/` holds the two
+strategy implementations that drive it. Unlike `marketintelligence/`, it has its own `model/`+
+`repository/` (runs/trades/equity points are persisted, see Section 18) — no `provider/`/`analyzer/`
+subpackage, since it introduces no new external provider, only a new method on the existing
+`MarketDataService`.
 
 Future
-features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `backtesting/`, `notifications/`,
+features (`agents/`, `prediction/`, `risk/`, `portfolio/`, `notifications/`,
 `websocket/`) should follow the base `controller/service/repository/model/dto` shape (adding
 `domain/`/`provider/`/`analyzer/`/`indicator/`/`rule/`-style subpackages only if they have the same
 kind of concrete need `market/`/`technicalanalysis/`/`signals/`/`fundamentals/`/`news/`/`sentiment/`
@@ -1528,3 +1548,174 @@ deduplication across market data/technical analysis/signals, any async/polling r
 for cold-request latency, crypto or any other asset class beyond stocks and forex, and any
 UI-facing flag distinguishing forex's quote-derived volume from a stock's exchange volume (see
 Section 8's forex note — currently a documented caveat, not a response field).
+
+## 18. Backtesting architecture
+
+Implemented: a deterministic, synchronous backtesting engine that replays historical daily candles
+bar-by-bar against one of two long-only strategies (a moving-average crossover or an RSI threshold),
+simulates fills with configurable commission/slippage, and persists the resulting trades, equity
+curve, and performance metrics per authenticated user. Exposed via
+`POST /api/v1/backtests`, `GET /api/v1/backtests`, `GET /api/v1/backtests/{id}`, and
+`GET /api/v1/backtests/{id}/trades` (all protected, same as every other non-auth endpoint). This is
+**not** an AI/LLM layer and produces no forward-looking predictions — it only replays history under
+a declared, explicit rule set.
+
+```
+BacktestController -> BacktestService -> MarketDataService.getCandlesInRange (new method)
+                                       -> BacktestStrategy (MovingAverageCrossover | RsiThreshold)
+                                       -> BacktestEngine (pure bar-by-bar simulation loop)
+                                       -> BacktestRunRepository / *TradeRepository / *EquityPointRepository
+```
+
+**The one new capability `MarketDataService` needed**: `getDailyCandles` always fetches a hardcoded
+trailing-365-day window from "now" (Section 6) — a backtest needs an arbitrary historical
+`[from, to]` range instead. `getCandlesInRange(symbolRaw, timeframeCode, from, to): List<Candle>` is
+a new, additive method alongside the existing one (zero changes to `getDailyCandles`,
+`persistNewCandles`, or `LOOKBACK_DAYS`): it resolves the instrument, calls
+`MarketDataProvider.fetchDailyCandles(providerSymbol, from, to)` directly with the caller-supplied
+dates instead of the hardcoded 365-day calculation, remaps the symbol back to `displaySymbol`, and
+reuses `persistNewCandles` as-is. Like `getDailyCandles`, it re-calls the provider on every request —
+it is not a DB-first read. `BacktestService` is its only caller; it talks to `MarketDataService`,
+never `MarketDataCandleRepository` directly, matching the codebase-wide rule that no feature reaches
+into another feature's repository (`SentimentService`→`NewsService`,
+`TechnicalAnalysisService`→`MarketDataService`, and so on).
+
+**Package layout** (`backtesting/`) follows the base `controller/service/repository/model/dto` shape
+plus `engine/`+`strategy/` subpackages, for the same reason `technicalanalysis/` has
+`domain/`+`indicator/` and `signals/` has `domain/`+`rule/`: `engine/` holds `BacktestEngine`, the
+pure, Spring-free bar-by-bar simulation loop (plus the co-located `StrategyAction` enum), named
+after the abstraction it holds per the `rule/`/`indicator/` naming convention; `strategy/` holds the
+`BacktestStrategy` interface and its two implementations. Unlike `marketintelligence/`, this feature
+has its own `model/`+`repository/` (runs, trades, and equity points are persisted) but no
+`provider/`/`analyzer/` subpackage — it introduces no new external provider, only the one additive
+`MarketDataService` method above.
+
+**Strategy semantics** — exactly two types, both reusing `technicalanalysis/indicator/`'s pure
+functions as-is (`Sma.calculate`/`Rsi.calculate`), never duplicating indicator math. Each strategy
+precomputes its full indicator series once, in its constructor, from the complete candle list
+(warm-up + requested range), then does an index-aligned O(1) lookup per bar — derived directly from
+`Sma`/`Rsi`'s actual output shape: `Sma.calculate(values, period)[k]` corresponds to original candle
+index `period - 1 + k`; `Rsi.calculate(closes, period)[j]` corresponds to original candle index
+`period + j`.
+
+- `MOVING_AVERAGE_CROSSOVER` — both fast and slow averages are plain `Sma` (not `Ema` — the
+  simplest, fully deterministic choice, with no seeding nuance to replicate). `warmupPeriod =
+  slowPeriod`. Entry (long): the fast average transitions from `<= slow` (previous bar) to `> slow`
+  (current bar) — an actual crossover event, not "already above," mirroring `signals/rule/CrossoverRule`'s
+  existing "already above is not a crossover" philosophy. Exit: the reverse transition. Params:
+  `fastPeriod`, `slowPeriod` (validated `fastPeriod < slowPeriod`, both positive).
+- `RSI_THRESHOLD` — `Rsi.calculate(closes, rsiPeriod)`. `warmupPeriod = rsiPeriod + 1` (a transition
+  needs both the current and previous RSI value). Entry (long): RSI transitions from
+  `<= oversoldThreshold` to `> oversoldThreshold` — a confirmed bounce, not "currently below" (which
+  would re-fire every bar while oversold). Exit: RSI transitions from `>= overboughtThreshold` to
+  `< overboughtThreshold` — a confirmed rollover. Merely entering the overbought/oversold zone is
+  never itself a signal. Params: `rsiPeriod`, `oversoldThreshold`, `overboughtThreshold`.
+
+Both strategies are long-only; there is no `direction` or `positionSizingType` field on the request
+at all — `BacktestService` hardcodes `TradeDirection.LONG` and `FIXED_QUANTITY` sizing as the only
+supported modes. Modeling an unreachable `SHORT_ONLY`/`LONG_SHORT` request value (that the service
+would then have to reject) would be exactly the kind of speculative state Section 2 bans — the
+`direction`/`position_sizing_type` columns on `backtest_runs` still record the constant value
+actually used, the same shape `market_data_candles.timeframe` already uses for `CandleTimeframe`'s
+one value. **Fields irrelevant to the chosen strategy type are rejected (400 via
+`InvalidStrategyParametersException`), never silently ignored**: supplying `rsiPeriod`/
+`oversoldThreshold`/`overboughtThreshold` with `strategyType = MOVING_AVERAGE_CROSSOVER` (or the
+reverse) is a real silently-ignored-input bug to guard against, unlike the direction case above,
+since both strategy types actually exist.
+
+**Execution timing — look-ahead-bias prevention, the core correctness requirement.** A signal is
+evaluated from bar `i`'s **close** (a fully formed bar); the resulting order fills at bar `i+1`'s
+**open**, with `slippageBps` applied against the trader (buys fill higher, sells fill lower) and
+`commissionPerOrder` charged once per fill (twice per round-trip trade). `BacktestEngine.run`'s loop,
+per bar, in order: (1) resolve any fill *decided* at the previous bar's close, executing at *this*
+bar's open; (2) force-close an still-open position on the final bar at that bar's close (no
+next-bar open exists to fill at) — `exitReason = END_OF_PERIOD` vs `SIGNAL` for a strategy-driven
+exit; (3) record this bar's equity point (cash plus the mark-to-market value of any open position);
+(4) evaluate a *new* signal from this bar's close, to fill at the *next* bar's open — skipped on the
+final bar, so a signal on the last candle produces no trade. A `FLAT`/`IN_POSITION` state check at
+steps 1 and 4 prevents duplicate entries/exits from repeated evaluation of the same bar. Every
+persisted trade therefore always has both an entry and an exit populated — there is no open/dangling
+trade state to model, which is why `backtest_trades` has no nullable exit columns.
+
+`BacktestService` computes `firstTradableIndex` as the index of the first fetched candle on or after
+the requested `fromDate`, and fetches starting from an earlier
+`warmupFromDate = fromDate.minusDays(warmupPeriod * 2 + 10)` (a generous heuristic, not a
+correctness guarantee — it only exists to avoid a spurious 422 on a legitimate request). The actual
+safety net is the subsequent check `firstTradableIndex >= strategy.warmupPeriod`, which throws the
+existing `InsufficientCandleDataException` (422, already-mapped handler, reused as-is) if the
+heuristic under-fetched for a given symbol/date range. `computeWarmupFromDate` is a
+`BacktestService` **companion** function (not an instance method) specifically so it is unit-testable
+without constructing the full service and its dependencies — this codebase has no mocking library.
+
+**Costs, sizing, and account currency.** `FIXED_QUANTITY` position sizing only (shares for stock,
+base-currency units for forex). No leverage/margin modeling — a forex "unit" costs its full notional
+in quote currency, identical cash mechanics to a stock share; this does not reproduce real leveraged
+forex trading, and is a documented limitation, not an oversight. No separate bid/ask spread model —
+`slippageBps` is the single configurable proxy for both spread and market impact. Account currency
+is validated with no fabricated conversion rates: a STOCK backtest requires `accountCurrency ==
+"USD"` (Orynix models no per-stock trading currency anywhere); a FOREX backtest requires
+`accountCurrency == instrument.quoteCurrency` (price movement is quote-currency-denominated).
+Mismatches throw `InvalidAccountCurrencyException` (400). An entry signal that the current cash
+cannot cover (`quantity * fillPrice + commissionPerOrder`) is silently skipped — visible in the
+result as fewer trades than signals, not an error.
+
+**Metrics** (all `BigDecimal`, `compareTo`/`signum()` not `==`, never `Infinity`/`NaN` in JSON):
+`winRate = winningTrades / closedTrades`, `null` iff zero closed trades (never zero). `profitFactor
+= sumWinningNetPnl / abs(sumLosingNetPnl)`, `null` iff that denominator is zero — regardless of
+whether gross profit is positive — documented as "undefined," never a fabricated `Infinity`.
+Breakeven trades (`netPnl.signum() == 0`) count toward the `closedTrades` denominator but neither
+the win nor loss numerator. `maxDrawdownPercent` is computed from the running peak of the recorded
+equity-point series (equity = cash plus the mark-to-market value of any open position); the first
+equity point is always pre-trade, so the peak starts at `initialCapital`. `returnPercent` on an
+individual `Trade` is denominated against that trade's own entry cost (`quantity * entryPrice`), not
+`initialCapital` or final equity — a clearly-defined, trade-local denominator.
+
+**Persistence — no `status`/`error_message` columns, deliberately.** Fully synchronous within one
+HTTP request; no async/job-queue infrastructure exists anywhere in this codebase and none is
+justified for daily-candle datasets bounded by `MAX_BACKTEST_RANGE_DAYS = 1825` (5 years — safely
+under `MassiveMarketDataProvider`'s unpaginated `limit=5000` ceiling for daily bars of either asset
+class). Every validation failure (invalid range, cross-strategy param conflict, bad account
+currency, insufficient candle data, malformed symbol) and any market-data provider failure is
+detected *before* a `BacktestRun` ever exists and propagates as the matching established HTTP
+status (400/422/502) with nothing persisted — exactly like every other feature's "fail the request
+outright" convention. `BacktestEngine.run` itself is pure arithmetic over an already-validated
+candle list; there is no reachable exception inside it that is not a programming bug, which should
+hit the existing 500 catch-all with nothing persisted, same as everywhere else. A `backtest_runs`
+row is therefore written only once, after the simulation has fully succeeded — mirroring
+`news_sentiments`' "computed once, never updated" precedent (Section 11/14) rather than modeling
+`PENDING`/`RUNNING`/`FAILED` states that would never actually be reachable. `completed_at` is set
+explicitly at construction (`Instant.now()`), no `@CreatedDate`/`AuditingEntityListener`, matching
+`NewsSentimentEntity.analyzedAt`'s precedent. `BacktestService.persist` is a single plain
+`@Transactional` method saving the run, its trades, and its equity points — unlike
+`persistNewCandles`/`persistNewArticles`, it needs **no** `REQUIRES_NEW`-plus-catch dedup pattern,
+because a backtest run has no natural key two concurrent requests could race on: each `POST` is a
+brand-new `UUID.randomUUID()` row, so no unique-constraint collision between concurrent requests is
+possible.
+
+**Migrations** `V6`/`V7`/`V8` add `backtest_runs` (one row per run, FK to `users` `ON DELETE
+CASCADE`, strategy parameters as explicit nullable typed columns — no JSONB anywhere in this
+schema), `backtest_trades` (FK to `backtest_runs` `ON DELETE CASCADE`, unique `(backtest_run_id,
+sequence_number)`), and `backtest_equity_points` (same FK/unique shape, the unique constraint
+doubling as the only needed index — mirroring `market_data_candles`'s precedent, since the sole read
+pattern is "all rows for one run, in sequence order").
+
+**Authorization**: every repository query is scoped `WHERE user_id = :userId`
+(`findByIdAndUserId`/`findAllByUserIdOrderByCompletedAtDesc`) — ownership is enforced in the query
+itself, never by a client-supplied owner id. A run that does not exist *or* belongs to another user
+returns the identical 404 (`BacktestNotFoundException`) — existence is never leaked.
+
+**API**: `BacktestRequest` deliberately omits an `instrument.assetType` field — `symbol` alone is
+sufficient since `InstrumentResolver` already infers asset type from shape everywhere else in this
+codebase (`"AAPL"` vs `"EUR/USD"`); a client-supplied `assetType` could disagree with the inferred
+one. `GET /api/v1/backtests/{id}/trades` folds the equity curve into the same response
+(`BacktestDetailResponse(trades, equityCurve)`) rather than adding a fifth route. `POST
+/api/v1/backtests`'s 201 response (`BacktestResponse`) echoes the validated config plus metrics —
+no trade/equity arrays, keeping the create response and the list response (`BacktestSummaryResponse`,
+an even lighter subset) a reasonable size regardless of how long the simulated range was.
+
+**Not yet implemented** (do not build ahead of a concrete task, per Section 2): short selling and
+any direction beyond long-only, any position sizing beyond a fixed quantity, partial exits,
+pyramiding or multiple simultaneous positions, cross-currency P&L conversion, any strategy type
+beyond the two above (no general-purpose strategy language), annualized-return/Sharpe-ratio-style
+advanced metrics, async/job-queue execution, and any AI/LLM involvement, price prediction, or
+trading recommendation derived from a backtest's results.

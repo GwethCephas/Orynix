@@ -1,11 +1,15 @@
 package com.cephCoding.orynix.common
 
+import com.cephCoding.orynix.common.exception.BacktestNotFoundException
 import com.cephCoding.orynix.common.exception.CompanyNotFoundException
 import com.cephCoding.orynix.common.exception.EmailAlreadyExistsException
 import com.cephCoding.orynix.common.exception.FundamentalDataProviderException
+import com.cephCoding.orynix.common.exception.InvalidAccountCurrencyException
+import com.cephCoding.orynix.common.exception.InvalidBacktestRangeException
 import com.cephCoding.orynix.common.exception.InvalidCredentialsException
 import com.cephCoding.orynix.common.exception.InvalidRefreshTokenException
 import com.cephCoding.orynix.common.exception.InsufficientCandleDataException
+import com.cephCoding.orynix.common.exception.InvalidStrategyParametersException
 import com.cephCoding.orynix.common.exception.InvalidSymbolException
 import com.cephCoding.orynix.common.exception.InvalidTimeframeException
 import com.cephCoding.orynix.common.exception.InvalidNewsLimitException
@@ -92,6 +96,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(SentimentAnalyzerException::class)
     fun handleSentimentAnalyzerFailure(ex: SentimentAnalyzerException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Sentiment analyzer request failed", request)
+
+    @ExceptionHandler(InvalidBacktestRangeException::class, InvalidStrategyParametersException::class, InvalidAccountCurrencyException::class)
+    fun handleBacktestValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(BacktestNotFoundException::class)
+    fun handleBacktestNotFound(ex: BacktestNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "Backtest not found", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {

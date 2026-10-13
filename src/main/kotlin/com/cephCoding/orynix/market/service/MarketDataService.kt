@@ -37,6 +37,23 @@ class MarketDataService(
     }
 
     /**
+     * Caller-supplied date range, for the backtesting engine (CLAUDE.md Section 18) — the only
+     * current caller. Unlike [getDailyCandles]'s hardcoded trailing-365-day window, this fetches
+     * exactly the requested [from, to] span, every time (same re-fetch-on-every-call behavior as
+     * [getDailyCandles] — this is not a DB-first read either). Reuses [persistNewCandles] as-is.
+     */
+    fun getCandlesInRange(symbolRaw: String, timeframeCode: String, from: LocalDate, to: LocalDate): List<Candle> {
+        val instrument = InstrumentResolver.resolve(symbolRaw)
+        val timeframe = CandleTimeframe.fromCode(timeframeCode)
+
+        val fetched = marketDataProvider.fetchDailyCandles(instrument.providerSymbol, from, to)
+            .map { it.copy(symbol = instrument.displaySymbol) }
+        persistNewCandles(instrument.displaySymbol, timeframe, fetched)
+
+        return fetched
+    }
+
+    /**
      * Runs in its own transaction so a duplicate-key failure here (two requests racing to
      * persist the same brand-new symbol/timeframe for the first time) can be caught and
      * swallowed without aborting the caller's transaction. The (symbol, timeframe, timestamp)
