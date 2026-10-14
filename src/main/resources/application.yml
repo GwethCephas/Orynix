@@ -25,6 +25,12 @@ huggingface:
   api-key: ${HUGGING_API_KEY}
   model: ${HUGGINGFACE_MODEL:ProsusAI/finbert}
 
+gemini:
+  base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+  api-key: ${ORYNIX_GEMINI_API_KEY}
+  model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+  timeout-ms: ${GEMINI_TIMEOUT_MS:20000}
+
 management:
   endpoints:
     web:

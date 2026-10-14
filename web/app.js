@@ -10,6 +10,7 @@ import * as newsPage from "./pages/news.js";
 import * as companyPage from "./pages/company.js";
 import * as backtestsPage from "./pages/backtests.js";
 import * as tradingAccountsPage from "./pages/tradingAccounts.js";
+import * as aiAnalysisPage from "./pages/aiAnalysis.js";
 
 const root = document.getElementById("app-root");
 const pageRoot = renderShell(root);
@@ -22,6 +23,7 @@ registerRoute("news", newsPage);
 registerRoute("company", companyPage);
 registerRoute("backtests", backtestsPage);
 registerRoute("trading-accounts", tradingAccountsPage);
+registerRoute("ai-analysis", aiAnalysisPage);
 setDefaultRoute("overview");
 
 async function restoreSession() {
