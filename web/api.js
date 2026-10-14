@@ -171,3 +171,7 @@ export function archiveTradingAccountProfile(profileId) {
 export function calculateRisk(request) {
   return apiRequest("/api/v1/risk-calculations", { method: "POST", body: request, useAuth: true });
 }
+
+export function getAiMarketAnalysis(request) {
+  return apiRequest("/api/v1/market-analyses", { method: "POST", body: request, useAuth: true });
+}

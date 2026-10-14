@@ -19,6 +19,7 @@ import tools.jackson.databind.ObjectMapper
     FundamentalDataTestConfiguration::class,
     NewsDataTestConfiguration::class,
     SentimentTestConfiguration::class,
+    MarketAnalysisTestConfiguration::class,
 )
 abstract class AbstractIntegrationTest {
 
@@ -40,9 +41,17 @@ abstract class AbstractIntegrationTest {
     @Autowired
     protected lateinit var fakeSentimentAnalyzer: FakeSentimentAnalyzer
 
+    @Autowired
+    protected lateinit var fakeMarketAnalysisProvider: FakeMarketAnalysisProvider
+
     @AfterEach
     fun resetFakeMarketDataProvider() {
         fakeMarketDataProvider.reset()
+    }
+
+    @AfterEach
+    fun resetFakeMarketAnalysisProvider() {
+        fakeMarketAnalysisProvider.reset()
     }
 
     @AfterEach

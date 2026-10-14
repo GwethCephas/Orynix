@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { path: "company", label: "Company Info" },
   { path: "backtests", label: "Backtesting" },
   { path: "trading-accounts", label: "Trading Accounts" },
+  { path: "ai-analysis", label: "AI Market Analysis" },
 ];
 
 export function renderShell(root) {

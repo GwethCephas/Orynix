@@ -19,6 +19,8 @@ import com.cephCoding.orynix.common.exception.NewsDataProviderException
 import com.cephCoding.orynix.common.exception.SentimentAnalyzerException
 import com.cephCoding.orynix.common.exception.InvalidRiskCalculationException
 import com.cephCoding.orynix.common.exception.InvalidTradingAccountProfileException
+import com.cephCoding.orynix.common.exception.MarketAnalysisProviderException
+import com.cephCoding.orynix.common.exception.MarketAnalysisResponseException
 import com.cephCoding.orynix.common.exception.TradingAccountProfileNotFoundException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
@@ -119,6 +121,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(InvalidRiskCalculationException::class)
     fun handleInvalidRiskCalculation(ex: InvalidRiskCalculationException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(MarketAnalysisProviderException::class, MarketAnalysisResponseException::class)
+    fun handleMarketAnalysisFailure(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Market analysis provider request failed", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {
