@@ -1,6 +1,7 @@
 package com.cephCoding.orynix.backtesting.dto
 
 import com.cephCoding.orynix.backtesting.domain.BacktestRun
+import com.cephCoding.orynix.backtesting.domain.PositionSizingType
 import com.cephCoding.orynix.backtesting.domain.StrategyType
 import com.cephCoding.orynix.backtesting.domain.TradeDirection
 import com.cephCoding.orynix.instrument.domain.AssetType
@@ -32,8 +33,8 @@ data class BacktestResponse(
     val direction: TradeDirection,
     val initialCapital: BigDecimal,
     val accountCurrency: String,
-    val positionSizingType: String,
-    val quantity: BigDecimal,
+    val positionSizingType: PositionSizingType,
+    val quantity: BigDecimal?,
     val commissionPerOrder: BigDecimal,
     val slippageBps: Int,
     val completedAt: Instant,
@@ -51,6 +52,13 @@ data class BacktestResponse(
     val entrySignalsGenerated: Int?,
     val exitSignalsGenerated: Int?,
     val entriesSkippedInsufficientCash: Int?,
+    val entriesSkippedInvalidQuantity: Int?,
+    val riskPercentPerTrade: BigDecimal?,
+    val atrRiskManagementEnabled: Boolean,
+    val atrPeriod: Int?,
+    val atrInitialStopMultiplier: BigDecimal?,
+    val atrTrailingStopEnabled: Boolean,
+    val atrTrailingStopMultiplier: BigDecimal?,
 ) {
     companion object {
         fun from(run: BacktestRun) = BacktestResponse(
@@ -95,6 +103,13 @@ data class BacktestResponse(
             entrySignalsGenerated = run.entrySignalsGenerated,
             exitSignalsGenerated = run.exitSignalsGenerated,
             entriesSkippedInsufficientCash = run.entriesSkippedInsufficientCash,
+            entriesSkippedInvalidQuantity = run.entriesSkippedInvalidQuantity,
+            riskPercentPerTrade = run.riskPercentPerTrade,
+            atrRiskManagementEnabled = run.atrRiskManagementEnabled,
+            atrPeriod = run.atrPeriod,
+            atrInitialStopMultiplier = run.atrInitialStopMultiplier,
+            atrTrailingStopEnabled = run.atrTrailingStopEnabled,
+            atrTrailingStopMultiplier = run.atrTrailingStopMultiplier,
         )
     }
 }

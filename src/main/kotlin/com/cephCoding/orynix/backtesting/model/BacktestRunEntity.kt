@@ -1,6 +1,7 @@
 package com.cephCoding.orynix.backtesting.model
 
 import com.cephCoding.orynix.backtesting.domain.BacktestRun
+import com.cephCoding.orynix.backtesting.domain.PositionSizingType
 import com.cephCoding.orynix.backtesting.domain.StrategyType
 import com.cephCoding.orynix.backtesting.domain.TradeDirection
 import com.cephCoding.orynix.instrument.domain.AssetType
@@ -93,8 +94,10 @@ class BacktestRunEntity(
     @Column(name = "position_sizing_type", nullable = false)
     val positionSizingType: String,
 
-    @Column(nullable = false)
-    val quantity: BigDecimal,
+    // Nullable: under RISK_BASED_ATR sizing there is no run-level fixed quantity (CLAUDE.md
+    // Section 18) - per-trade quantities remain on backtest_trades, unaffected.
+    @Column
+    val quantity: BigDecimal?,
 
     @Column(name = "commission_per_order", nullable = false)
     val commissionPerOrder: BigDecimal,
@@ -146,6 +149,27 @@ class BacktestRunEntity(
 
     @Column(name = "entries_skipped_insufficient_cash")
     val entriesSkippedInsufficientCash: Int?,
+
+    @Column(name = "entries_skipped_invalid_quantity")
+    val entriesSkippedInvalidQuantity: Int?,
+
+    @Column(name = "risk_percent_per_trade")
+    val riskPercentPerTrade: BigDecimal?,
+
+    @Column(name = "atr_risk_management_enabled", nullable = false)
+    val atrRiskManagementEnabled: Boolean,
+
+    @Column(name = "atr_period")
+    val atrPeriod: Int?,
+
+    @Column(name = "atr_initial_stop_multiplier")
+    val atrInitialStopMultiplier: BigDecimal?,
+
+    @Column(name = "atr_trailing_stop_enabled", nullable = false)
+    val atrTrailingStopEnabled: Boolean,
+
+    @Column(name = "atr_trailing_stop_multiplier")
+    val atrTrailingStopMultiplier: BigDecimal?,
 ) {
     fun toDomain() = BacktestRun(
         id = id,
@@ -170,7 +194,7 @@ class BacktestRunEntity(
         direction = TradeDirection.valueOf(direction),
         initialCapital = initialCapital,
         accountCurrency = accountCurrency,
-        positionSizingType = positionSizingType,
+        positionSizingType = PositionSizingType.valueOf(positionSizingType),
         quantity = quantity,
         commissionPerOrder = commissionPerOrder,
         slippageBps = slippageBps,
@@ -189,6 +213,13 @@ class BacktestRunEntity(
         entrySignalsGenerated = entrySignalsGenerated,
         exitSignalsGenerated = exitSignalsGenerated,
         entriesSkippedInsufficientCash = entriesSkippedInsufficientCash,
+        entriesSkippedInvalidQuantity = entriesSkippedInvalidQuantity,
+        riskPercentPerTrade = riskPercentPerTrade,
+        atrRiskManagementEnabled = atrRiskManagementEnabled,
+        atrPeriod = atrPeriod,
+        atrInitialStopMultiplier = atrInitialStopMultiplier,
+        atrTrailingStopEnabled = atrTrailingStopEnabled,
+        atrTrailingStopMultiplier = atrTrailingStopMultiplier,
     )
 
     companion object {
@@ -216,7 +247,7 @@ class BacktestRunEntity(
             direction = run.direction.name,
             initialCapital = run.initialCapital,
             accountCurrency = run.accountCurrency,
-            positionSizingType = run.positionSizingType,
+            positionSizingType = run.positionSizingType.name,
             quantity = run.quantity,
             commissionPerOrder = run.commissionPerOrder,
             slippageBps = run.slippageBps,
@@ -235,6 +266,13 @@ class BacktestRunEntity(
             entrySignalsGenerated = run.entrySignalsGenerated,
             exitSignalsGenerated = run.exitSignalsGenerated,
             entriesSkippedInsufficientCash = run.entriesSkippedInsufficientCash,
+            entriesSkippedInvalidQuantity = run.entriesSkippedInvalidQuantity,
+            riskPercentPerTrade = run.riskPercentPerTrade,
+            atrRiskManagementEnabled = run.atrRiskManagementEnabled,
+            atrPeriod = run.atrPeriod,
+            atrInitialStopMultiplier = run.atrInitialStopMultiplier,
+            atrTrailingStopEnabled = run.atrTrailingStopEnabled,
+            atrTrailingStopMultiplier = run.atrTrailingStopMultiplier,
         )
     }
 }

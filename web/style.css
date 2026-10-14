@@ -1299,6 +1299,25 @@ button {
   line-height: 1.4;
 }
 
+/* The ATR risk-management section's two checkboxes (CLAUDE.md Section 18) - a horizontal
+   checkbox + label layout, unlike every other .backtest-field, which stacks a label above a
+   full-width text/select input. The checkbox itself overrides the generic .backtest-field input
+   box styling (border/background/padding), which is meant for text/number/select controls. */
+.backtest-field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.backtest-field-checkbox input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 0;
+  accent-color: var(--accent, #5b9dff);
+}
+
 .backtest-asset-toggle {
   display: flex;
   gap: 6px;

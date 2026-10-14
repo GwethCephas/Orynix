@@ -1,5 +1,6 @@
 package com.cephCoding.orynix.backtesting
 
+import com.cephCoding.orynix.backtesting.domain.PositionSizingType
 import com.cephCoding.orynix.backtesting.domain.StrategyType
 import com.cephCoding.orynix.backtesting.dto.BacktestDetailResponse
 import com.cephCoding.orynix.backtesting.dto.BacktestRequest
@@ -65,9 +66,14 @@ class BacktestControllerTest : AbstractIntegrationTest() {
         adxThreshold = null,
         initialCapital = BigDecimal("1000"),
         accountCurrency = "USD",
+        positionSizingType = PositionSizingType.FIXED_QUANTITY,
         quantity = BigDecimal("1"),
+        riskPercentPerTrade = null,
         commissionPerOrder = BigDecimal("0"),
         slippageBps = 0,
+        atrPeriod = null,
+        atrInitialStopMultiplier = null,
+        atrTrailingStopMultiplier = null,
     )
 
     // Hand-verified by running MacdCalculator's own EMA algorithm (fast 2, slow 3, signal 2) over
@@ -452,5 +458,126 @@ class BacktestControllerTest : AbstractIntegrationTest() {
 
         mockMvc.get("/api/v1/backtests/${created.id}/trades") { header("Authorization", "Bearer ${otherAuth.accessToken}") }
             .andExpect { status { isNotFound() } }
+    }
+
+    // --- ATR risk management -------------------------------------------------------------------
+
+    @Test
+    fun `a risk-based ATR run persists stop prices and echoes the risk configuration`() {
+        val auth = register("backtest-atrhappy@example.com")
+        fakeMarketDataProvider.candlesToReturn = crossoverCandles("BTEST")
+
+        val request = movingAverageCrossoverRequest().copy(
+            positionSizingType = PositionSizingType.RISK_BASED_ATR,
+            quantity = null,
+            riskPercentPerTrade = BigDecimal("1"),
+            atrRiskManagementEnabled = true,
+            atrPeriod = 2,
+            atrInitialStopMultiplier = BigDecimal("2"),
+        )
+        val response = postBacktest(auth.accessToken, request).andReturn().response
+        assertEquals(201, response.status)
+        val body = objectMapper.readValue(response.contentAsString, BacktestResponse::class.java)
+
+        assertEquals(PositionSizingType.RISK_BASED_ATR, body.positionSizingType)
+        assertEquals(null, body.quantity)
+        assertEquals(BigDecimal("1"), body.riskPercentPerTrade)
+        assertEquals(true, body.atrRiskManagementEnabled)
+        assertEquals(2, body.atrPeriod)
+        assertEquals(1, body.totalTrades)
+
+        val detailResponse = mockMvc.get("/api/v1/backtests/${body.id}/trades") {
+            header("Authorization", "Bearer ${auth.accessToken}")
+        }.andReturn().response
+        val detail = objectMapper.readValue(detailResponse.contentAsString, BacktestDetailResponse::class.java)
+
+        assertEquals(1, detail.trades.size)
+        val trade = detail.trades[0]
+        assertTrue(trade.quantity.signum() > 0)
+        assertTrue(trade.initialStopPrice != null)
+        assertTrue(trade.finalStopPrice != null)
+    }
+
+    @Test
+    fun `riskPercentPerTrade is rejected with 400 under FIXED_QUANTITY sizing`() {
+        val auth = register("backtest-riskpctfixed@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(riskPercentPerTrade = BigDecimal("1"))
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `quantity is rejected with 400 under RISK_BASED_ATR sizing`() {
+        val auth = register("backtest-qtyriskbased@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(
+            positionSizingType = PositionSizingType.RISK_BASED_ATR,
+            riskPercentPerTrade = BigDecimal("1"),
+            atrRiskManagementEnabled = true,
+        )
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `RISK_BASED_ATR sizing without ATR risk management enabled is rejected with 400`() {
+        val auth = register("backtest-riskbasednoatr@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(
+            positionSizingType = PositionSizingType.RISK_BASED_ATR,
+            quantity = null,
+            riskPercentPerTrade = BigDecimal("1"),
+        )
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `ATR fields supplied while ATR risk management is disabled are rejected with 400`() {
+        val auth = register("backtest-atrfieldsdisabled@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(atrPeriod = 14)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `a non-positive ATR period is rejected with 400`() {
+        val auth = register("backtest-badatrperiod@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(atrRiskManagementEnabled = true, atrPeriod = 0)
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `a trailing stop multiplier supplied while trailing is disabled is rejected with 400`() {
+        val auth = register("backtest-trailingmultiplierdisabled@example.com")
+
+        val request = movingAverageCrossoverRequest().copy(
+            atrRiskManagementEnabled = true,
+            atrTrailingStopMultiplier = BigDecimal("2"),
+        )
+        postBacktest(auth.accessToken, request).andExpect { status { isBadRequest() } }
+    }
+
+    @Test
+    fun `insufficient history for the ATR period alone is rejected with 422`() {
+        val auth = register("backtest-atrwarmupinsufficient@example.com")
+        fakeMarketDataProvider.candlesToReturn = flatCandles("BTEST", 10)
+
+        // RSI_THRESHOLD's own warmup (rsiPeriod 2 -> 3) is satisfied by firstTradableIndex=5, but
+        // atrPeriod=10 raises the effective floor above it.
+        val request = movingAverageCrossoverRequest().copy(
+            strategyType = StrategyType.RSI_THRESHOLD,
+            fastPeriod = null,
+            slowPeriod = null,
+            rsiPeriod = 2,
+            oversoldThreshold = BigDecimal("30"),
+            overboughtThreshold = BigDecimal("70"),
+            fromDate = LocalDate.of(2026, 1, 6),
+            toDate = LocalDate.of(2026, 1, 10),
+            atrRiskManagementEnabled = true,
+            atrPeriod = 10,
+            atrInitialStopMultiplier = BigDecimal("2"),
+        )
+        val response = postBacktest(auth.accessToken, request).andReturn().response
+        assertEquals(422, response.status)
     }
 }

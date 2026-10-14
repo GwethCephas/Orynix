@@ -19,6 +19,8 @@ data class TradeResponse(
     val netPnl: BigDecimal,
     val returnPercent: BigDecimal,
     val exitReason: ExitReason,
+    val initialStopPrice: BigDecimal?,
+    val finalStopPrice: BigDecimal?,
 ) {
     companion object {
         fun from(trade: Trade) = TradeResponse(
@@ -34,6 +36,8 @@ data class TradeResponse(
             netPnl = trade.netPnl,
             returnPercent = trade.returnPercent,
             exitReason = trade.exitReason,
+            initialStopPrice = trade.initialStopPrice,
+            finalStopPrice = trade.finalStopPrice,
         )
     }
 }

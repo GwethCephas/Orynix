@@ -1,5 +1,6 @@
 package com.cephCoding.orynix.backtesting.dto
 
+import com.cephCoding.orynix.backtesting.domain.PositionSizingType
 import com.cephCoding.orynix.backtesting.domain.StrategyType
 import jakarta.validation.constraints.DecimalMin
 import jakarta.validation.constraints.Min
@@ -48,8 +49,15 @@ data class BacktestRequest(
     val accountCurrency: String,
 
     @field:NotNull
-    @field:Positive
-    val quantity: BigDecimal,
+    val positionSizingType: PositionSizingType,
+
+    // Required-and-positive only under FIXED_QUANTITY, rejected (not silently ignored) under
+    // RISK_BASED_ATR - enforced in BacktestService, since Bean Validation can't express
+    // "required depending on another field's value" (CLAUDE.md Section 18).
+    val quantity: BigDecimal?,
+
+    // Required, and must be in (0, 100], only under RISK_BASED_ATR; rejected under FIXED_QUANTITY.
+    val riskPercentPerTrade: BigDecimal?,
 
     @field:NotNull
     @field:DecimalMin(value = "0", inclusive = true)
@@ -58,4 +66,13 @@ data class BacktestRequest(
     @field:NotNull
     @field:Min(0)
     val slippageBps: Int,
+
+    // ATR risk management - optional, strategy-independent (CLAUDE.md Section 18). All five fields
+    // below are rejected (not silently ignored) when atrRiskManagementEnabled is false, and
+    // atrTrailingStopMultiplier is additionally rejected when atrTrailingStopEnabled is false.
+    val atrRiskManagementEnabled: Boolean = false,
+    val atrPeriod: Int?,
+    val atrInitialStopMultiplier: BigDecimal?,
+    val atrTrailingStopEnabled: Boolean = false,
+    val atrTrailingStopMultiplier: BigDecimal?,
 )

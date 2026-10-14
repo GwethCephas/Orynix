@@ -26,6 +26,7 @@ const STRATEGY_LABELS = {
 const EXIT_REASON_LABELS = {
   SIGNAL: "Strategy signal",
   END_OF_PERIOD: "End of backtest period",
+  ATR_STOP: "ATR stop-loss",
 };
 
 const FOREX_PATTERN = /^([A-Z]{3})\/([A-Z]{3})$/;
@@ -234,16 +235,63 @@ export function mount(container) {
               <small class="backtest-field-hint" data-hint="currency"></small>
             </label>
             <label class="backtest-field">
-              <span data-label="quantity">Quantity (shares)</span>
-              <input type="number" name="quantity" min="0" step="any" value="10">
-            </label>
-            <label class="backtest-field">
               <span>Commission per order</span>
               <input type="number" name="commissionPerOrder" min="0" step="any" value="1.00">
             </label>
             <label class="backtest-field">
               <span>Slippage (basis points)</span>
               <input type="number" name="slippageBps" min="0" step="1" value="5">
+            </label>
+          </div>
+
+          <h3 class="backtest-subheading">Position sizing &amp; risk management</h3>
+          <div class="backtest-form-grid">
+            <label class="backtest-field">
+              <span>Position sizing</span>
+              <select name="positionSizingType">
+                <option value="FIXED_QUANTITY">Fixed quantity</option>
+                <option value="RISK_BASED_ATR">Risk-based (ATR)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="backtest-form-grid" data-sizing-group="FIXED_QUANTITY">
+            <label class="backtest-field">
+              <span data-label="quantity">Quantity (shares)</span>
+              <input type="number" name="quantity" min="0" step="any" value="10">
+            </label>
+          </div>
+
+          <div class="backtest-form-grid" data-sizing-group="RISK_BASED_ATR" hidden>
+            <label class="backtest-field">
+              <span>Risk per trade (%)</span>
+              <input type="number" name="riskPercentPerTrade" min="0" max="100" step="any" value="1.0">
+            </label>
+          </div>
+
+          <div class="backtest-form-grid">
+            <label class="backtest-field backtest-field-checkbox">
+              <input type="checkbox" name="atrRiskManagementEnabled">
+              <span>Enable ATR stop-loss</span>
+            </label>
+          </div>
+
+          <div class="backtest-form-grid" data-risk-group="ATR" hidden>
+            <label class="backtest-field">
+              <span>ATR period</span>
+              <input type="number" name="atrPeriod" min="1" step="1" value="14">
+            </label>
+            <label class="backtest-field">
+              <span>Initial stop multiplier (&times; ATR)</span>
+              <input type="number" name="atrInitialStopMultiplier" min="0" step="any" value="2.0">
+            </label>
+            <label class="backtest-field backtest-field-checkbox">
+              <input type="checkbox" name="atrTrailingStopEnabled">
+              <span>Enable trailing stop</span>
+            </label>
+            <label class="backtest-field" data-trailing-group hidden>
+              <span>Trailing stop multiplier (&times; ATR)</span>
+              <input type="number" name="atrTrailingStopMultiplier" min="0" step="any" value="2.0">
             </label>
           </div>
 
@@ -279,6 +327,12 @@ export function mount(container) {
   const quantityLabel = form.querySelector('[data-label="quantity"]');
   const strategySelect = form.querySelector('[name="strategyType"]');
   const strategyGroups = form.querySelectorAll("[data-strategy-group]");
+  const sizingSelect = form.querySelector('[name="positionSizingType"]');
+  const sizingGroups = form.querySelectorAll("[data-sizing-group]");
+  const atrEnabledCheckbox = form.querySelector('[name="atrRiskManagementEnabled"]');
+  const riskGroupEl = form.querySelector('[data-risk-group="ATR"]');
+  const trailingCheckbox = form.querySelector('[name="atrTrailingStopEnabled"]');
+  const trailingGroupEl = form.querySelector('[data-trailing-group]');
   const validationErrorEl = form.querySelector(".backtest-validation-error");
   const submitBtn = form.querySelector(".backtest-submit-btn");
   const sizingPanelEl = container.querySelector("#sizingPanel");
@@ -348,13 +402,33 @@ export function mount(container) {
     });
   });
 
+  function syncSizingVisibility() {
+    sizingGroups.forEach((group) => {
+      group.hidden = group.dataset.sizingGroup !== sizingSelect.value;
+    });
+    renderSizingPanel();
+  }
+  function syncRiskVisibility() {
+    riskGroupEl.hidden = !atrEnabledCheckbox.checked;
+  }
+  function syncTrailingVisibility() {
+    trailingGroupEl.hidden = !trailingCheckbox.checked;
+  }
+  sizingSelect.addEventListener("change", syncSizingVisibility);
+  atrEnabledCheckbox.addEventListener("change", syncRiskVisibility);
+  trailingCheckbox.addEventListener("change", syncTrailingVisibility);
+
   form.querySelector('[name="quantity"]').addEventListener("input", renderSizingPanel);
   form.querySelector('[name="initialCapital"]').addEventListener("input", renderSizingPanel);
+  form.querySelector('[name="riskPercentPerTrade"]').addEventListener("input", renderSizingPanel);
 
   setAssetClass(initialAssetClass);
   strategyGroups.forEach((group) => {
     group.hidden = group.dataset.strategyGroup !== strategySelect.value;
   });
+  syncSizingVisibility();
+  syncRiskVisibility();
+  syncTrailingVisibility();
 
   // ---------- Position-sizing preview ----------
 
@@ -394,6 +468,20 @@ export function mount(container) {
     const quantity = Number(quantityRaw);
     const initialCapital = Number(capitalRaw);
     const currency = currencyInput.value || "USD";
+
+    // Risk-based sizing computes the actual quantity per trade from account equity, the ATR at
+    // the signal bar, and the configured risk % - there is no single "requested quantity" to
+    // preview before the simulation actually runs, unlike FIXED_QUANTITY's notional estimate.
+    if (sizingSelect.value === "RISK_BASED_ATR") {
+      sizingPanelEl.innerHTML = `
+        <h2>Position sizing</h2>
+        <p class="section-status">
+          Position size is computed per trade from account equity, the ATR value at each entry
+          signal, and the configured risk percentage - it cannot be previewed before running the
+          backtest.
+        </p>`;
+      return;
+    }
 
     if (!isValidSymbol(symbol)) {
       sizingPanelEl.innerHTML = `
@@ -477,9 +565,16 @@ export function mount(container) {
       adxThreshold: form.querySelector('[name="adxThreshold"]').value,
       initialCapital: form.querySelector('[name="initialCapital"]').value,
       accountCurrency: currencyInput.value,
+      positionSizingType: sizingSelect.value,
       quantity: form.querySelector('[name="quantity"]').value,
+      riskPercentPerTrade: form.querySelector('[name="riskPercentPerTrade"]').value,
       commissionPerOrder: form.querySelector('[name="commissionPerOrder"]').value,
       slippageBps: form.querySelector('[name="slippageBps"]').value,
+      atrRiskManagementEnabled: atrEnabledCheckbox.checked,
+      atrPeriod: form.querySelector('[name="atrPeriod"]').value,
+      atrInitialStopMultiplier: form.querySelector('[name="atrInitialStopMultiplier"]').value,
+      atrTrailingStopEnabled: trailingCheckbox.checked,
+      atrTrailingStopMultiplier: form.querySelector('[name="atrTrailingStopMultiplier"]').value,
     };
   }
 
@@ -534,7 +629,22 @@ export function mount(container) {
       errors.push("Enter a valid symbol first so the required account currency can be determined.");
     }
     if (!(Number(values.initialCapital) > 0)) errors.push("Initial capital must be a positive number.");
-    if (!(Number(values.quantity) > 0)) errors.push("Quantity must be a positive number.");
+    if (values.positionSizingType === "FIXED_QUANTITY") {
+      if (!(Number(values.quantity) > 0)) errors.push("Quantity must be a positive number.");
+    } else {
+      const riskPct = Number(values.riskPercentPerTrade);
+      if (!(riskPct > 0) || !(riskPct <= 100)) errors.push("Risk per trade must be a number between 0 and 100.");
+      if (!values.atrRiskManagementEnabled) {
+        errors.push("ATR stop-loss must be enabled when using risk-based position sizing.");
+      }
+    }
+    if (values.atrRiskManagementEnabled) {
+      if (!(Number(values.atrPeriod) > 0)) errors.push("ATR period must be a positive number.");
+      if (!(Number(values.atrInitialStopMultiplier) > 0)) errors.push("Initial stop multiplier must be a positive number.");
+      if (values.atrTrailingStopEnabled && !(Number(values.atrTrailingStopMultiplier) > 0)) {
+        errors.push("Trailing stop multiplier must be a positive number.");
+      }
+    }
     if (!(Number(values.commissionPerOrder) >= 0)) errors.push("Commission per order cannot be negative.");
     if (!(Number(values.slippageBps) >= 0) || !Number.isInteger(Number(values.slippageBps))) {
       errors.push("Slippage must be a non-negative whole number of basis points.");
@@ -596,6 +706,29 @@ export function mount(container) {
         adxThreshold: Number(values.adxThreshold),
       };
     }
+    // Mirrors EMPTY_STRATEGY_FIELDS' explicit-null convention above, applied to the sizing/risk
+    // axis: whichever sizing mode or ATR sub-field is not active is sent as an explicit null,
+    // never omitted, matching BacktestService's reject-don't-ignore validation (CLAUDE.md
+    // Section 18).
+    const sizingFields =
+      values.positionSizingType === "FIXED_QUANTITY"
+        ? { quantity: Number(values.quantity), riskPercentPerTrade: null }
+        : { quantity: null, riskPercentPerTrade: Number(values.riskPercentPerTrade) };
+    const riskManagementFields = values.atrRiskManagementEnabled
+      ? {
+          atrRiskManagementEnabled: true,
+          atrPeriod: Number(values.atrPeriod),
+          atrInitialStopMultiplier: Number(values.atrInitialStopMultiplier),
+          atrTrailingStopEnabled: values.atrTrailingStopEnabled,
+          atrTrailingStopMultiplier: values.atrTrailingStopEnabled ? Number(values.atrTrailingStopMultiplier) : null,
+        }
+      : {
+          atrRiskManagementEnabled: false,
+          atrPeriod: null,
+          atrInitialStopMultiplier: null,
+          atrTrailingStopEnabled: false,
+          atrTrailingStopMultiplier: null,
+        };
     return {
       symbol: values.symbol,
       fromDate: values.fromDate,
@@ -604,9 +737,11 @@ export function mount(container) {
       ...strategyFields,
       initialCapital: Number(values.initialCapital),
       accountCurrency: values.accountCurrency,
-      quantity: Number(values.quantity),
+      positionSizingType: values.positionSizingType,
+      ...sizingFields,
       commissionPerOrder: Number(values.commissionPerOrder),
       slippageBps: Number(values.slippageBps),
+      ...riskManagementFields,
     };
   }
 
@@ -668,11 +803,15 @@ export function mount(container) {
     if (run.entrySignalsGenerated === 0) {
       return "No entry signals were generated during this period - the strategy's conditions were never met.";
     }
+    const invalidQty = run.entriesSkippedInvalidQuantity || 0;
+    if (invalidQty > 0 && run.totalTrades === 0) {
+      return `${run.entrySignalsGenerated} entry signal${run.entrySignalsGenerated === 1 ? "" : "s"} were generated, but ${invalidQty === run.entrySignalsGenerated ? "all" : invalidQty} ${invalidQty === 1 ? "was" : "were"} skipped because risk-based sizing could not compute a usable quantity (the ATR value or multiplier was zero or negative at that signal).`;
+    }
     if (run.entriesSkippedInsufficientCash > 0 && run.totalTrades === 0) {
       return `${run.entrySignalsGenerated} entry signal${run.entrySignalsGenerated === 1 ? "" : "s"} were generated, but ${run.entriesSkippedInsufficientCash === run.entrySignalsGenerated ? "all" : run.entriesSkippedInsufficientCash} ${run.entriesSkippedInsufficientCash === 1 ? "was" : "were"} skipped because available cash was insufficient for the requested position size.`;
     }
-    if (run.entriesSkippedInsufficientCash > 0) {
-      return `${run.entrySignalsGenerated} entry signal${run.entrySignalsGenerated === 1 ? "" : "s"} were generated; ${run.totalTrades} executed, ${run.entriesSkippedInsufficientCash} skipped for insufficient cash.`;
+    if (run.entriesSkippedInsufficientCash > 0 || invalidQty > 0) {
+      return `${run.entrySignalsGenerated} entry signal${run.entrySignalsGenerated === 1 ? "" : "s"} were generated; ${run.totalTrades} executed, ${run.entriesSkippedInsufficientCash} skipped for insufficient cash, ${invalidQty} skipped for an invalid computed quantity.`;
     }
     return `${run.entrySignalsGenerated} entry signal${run.entrySignalsGenerated === 1 ? "" : "s"} generated, all executed.`;
   }
@@ -710,7 +849,12 @@ export function mount(container) {
         <p class="section-disclaimer">
           ${escapeHtml(run.assetType)} &middot; ${formatDate(run.fromDate)} - ${formatDate(run.toDate)} &middot;
           ${strategyDescription(run)}
-          &middot; Quantity ${formatNumber(run.quantity, 2)} &middot; Commission ${formatMoney(run.commissionPerOrder, currency)}/order &middot; Slippage ${run.slippageBps} bps
+          &middot; ${
+            run.quantity !== null && run.quantity !== undefined
+              ? `Quantity ${formatNumber(run.quantity, 2)}`
+              : `Risk-based sizing, ${formatPercent(run.riskPercentPerTrade)} of equity per trade`
+          } &middot; Commission ${formatMoney(run.commissionPerOrder, currency)}/order &middot; Slippage ${run.slippageBps} bps
+          ${run.atrRiskManagementEnabled ? `&middot; ATR(${run.atrPeriod}) stop &times;${formatNumber(run.atrInitialStopMultiplier, 2)}${run.atrTrailingStopEnabled ? `, trailing &times;${formatNumber(run.atrTrailingStopMultiplier, 2)}` : ""}` : ""}
         </p>
 
         <div class="metric-grid">
@@ -751,8 +895,19 @@ export function mount(container) {
           <div><span class="backtest-diagnostics-label">Entry signals</span><span>${formatNumber(run.entrySignalsGenerated, 0)}</span></div>
           <div><span class="backtest-diagnostics-label">Exit signals</span><span>${formatNumber(run.exitSignalsGenerated, 0)}</span></div>
           <div><span class="backtest-diagnostics-label">Trades executed</span><span>${formatNumber(run.totalTrades, 0)}</span></div>
-          <div><span class="backtest-diagnostics-label">Entries skipped</span><span>${formatNumber(run.entriesSkippedInsufficientCash, 0)}</span></div>
-          <div><span class="backtest-diagnostics-label">Main skip reason</span><span>${run.entriesSkippedInsufficientCash > 0 ? "Insufficient cash" : "N/A"}</span></div>
+          <div><span class="backtest-diagnostics-label">Entries skipped (cash)</span><span>${formatNumber(run.entriesSkippedInsufficientCash, 0)}</span></div>
+          ${
+            run.entriesSkippedInvalidQuantity !== null && run.entriesSkippedInvalidQuantity !== undefined
+              ? `<div><span class="backtest-diagnostics-label">Entries skipped (invalid quantity)</span><span>${formatNumber(run.entriesSkippedInvalidQuantity, 0)}</span></div>`
+              : ""
+          }
+          <div><span class="backtest-diagnostics-label">Main skip reason</span><span>${
+            (run.entriesSkippedInvalidQuantity || 0) > 0
+              ? "Invalid computed quantity"
+              : run.entriesSkippedInsufficientCash > 0
+                ? "Insufficient cash"
+                : "N/A"
+          }</span></div>
         </div>`
             : ""
         }
@@ -789,16 +944,25 @@ export function mount(container) {
       loadingLines: 4,
       onRetry: () => loadDetail(run.id),
       renderContent: (detail) => {
-        renderTradeLedger(tradeLedgerEl, detail.trades, currency);
+        renderTradeLedger(tradeLedgerEl, detail.trades, currency, run.atrRiskManagementEnabled);
       },
     });
   }
 
-  function renderTradeLedger(el, trades, currency) {
+  function renderTradeLedger(el, trades, currency, showStops) {
     if (!trades || trades.length === 0) {
       el.innerHTML = `<div class="empty-state"><p>No trades were executed during this period. See the diagnostics above to find out why.</p></div>`;
       return;
     }
+    const exitReasonTooltip = (reason) => {
+      if (reason === "END_OF_PERIOD") {
+        return ` title="The position was still open when the simulation period ended and was force-closed at the final candle's close - this is not a strategy exit signal."`;
+      }
+      if (reason === "ATR_STOP") {
+        return ` title="Closed intrabar when price breached the ATR-based stop level (initial or trailed) - not a strategy exit signal."`;
+      }
+      return "";
+    };
     el.innerHTML = `
       <div class="backtest-table-wrapper">
         <table class="backtest-trades-table">
@@ -806,6 +970,7 @@ export function mount(container) {
             <tr>
               <th>#</th><th>Direction</th><th>Entry date</th><th>Entry price</th><th>Exit date</th><th>Exit price</th>
               <th>Quantity</th><th>Gross P&amp;L</th><th>Costs</th><th>Net P&amp;L</th><th>Return</th><th>Exit reason</th>
+              ${showStops ? `<th>Initial stop</th><th>Final stop</th>` : ""}
             </tr>
           </thead>
           <tbody>
@@ -825,10 +990,16 @@ export function mount(container) {
                 <td class="${pnlClass(t.netPnl)}">${formatMoney(t.netPnl, currency)}</td>
                 <td class="${pnlClass(t.returnPercent)}">${formatPercent(t.returnPercent)}</td>
                 <td>
-                  <span class="backtest-exit-reason"${t.exitReason === "END_OF_PERIOD" ? ` title="The position was still open when the simulation period ended and was force-closed at the final candle's close - this is not a strategy exit signal."` : ""}>
+                  <span class="backtest-exit-reason"${exitReasonTooltip(t.exitReason)}>
                     ${escapeHtml(EXIT_REASON_LABELS[t.exitReason] || t.exitReason)}
                   </span>
                 </td>
+                ${
+                  showStops
+                    ? `<td>${t.initialStopPrice === null || t.initialStopPrice === undefined ? "N/A" : formatMoney(t.initialStopPrice, currency)}</td>
+                       <td>${t.finalStopPrice === null || t.finalStopPrice === undefined ? "N/A" : formatMoney(t.finalStopPrice, currency)}</td>`
+                    : ""
+                }
               </tr>`
               )
               .join("")}
