@@ -6,6 +6,7 @@ import com.cephCoding.orynix.backtesting.domain.Trade
 import com.cephCoding.orynix.backtesting.domain.TradeDirection
 import com.cephCoding.orynix.backtesting.strategy.BacktestStrategy
 import com.cephCoding.orynix.market.domain.Candle
+import com.cephCoding.orynix.technicalanalysis.indicator.Atr
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
@@ -13,6 +14,18 @@ import java.time.Instant
 enum class StrategyAction { ENTER_LONG, EXIT_LONG, HOLD }
 
 private enum class ExecutionState { FLAT, IN_POSITION }
+
+/**
+ * Optional, strategy-independent ATR risk management. atrPeriod/initialStopMultiplier are always
+ * read; trailingStopMultiplier is only read when trailingEnabled - validated upstream in
+ * BacktestService, not re-validated here.
+ */
+data class RiskManagementConfig(
+    val atrPeriod: Int,
+    val initialStopMultiplier: BigDecimal,
+    val trailingEnabled: Boolean,
+    val trailingStopMultiplier: BigDecimal,
+)
 
 data class BacktestEngineResult(
     val trades: List<Trade>,
@@ -29,12 +42,15 @@ data class BacktestEngineResult(
     val profitFactor: BigDecimal?,
     // Diagnostics (CLAUDE.md Section 18) - exist specifically to distinguish "the strategy never
     // signaled" from "it signaled but every entry was skipped," since totalTrades alone cannot.
-    // entriesSkippedInsufficientCash is the only skip reason the engine implements today (step 1
-    // below) - there is deliberately no separate reasons breakdown for a single possible cause.
     val candlesEvaluated: Int,
     val entrySignalsGenerated: Int,
     val exitSignalsGenerated: Int,
+    // entriesSkippedInsufficientCash: a sized entry (fixed or risk-based) that cash couldn't cover.
+    // entriesSkippedInvalidQuantity: risk-based sizing alone could not produce a usable quantity at
+    // all (degenerate ATR/multiplier) - a distinct failure mode from "sized but unaffordable," so it
+    // is counted separately rather than folded into entriesSkippedInsufficientCash.
     val entriesSkippedInsufficientCash: Int,
+    val entriesSkippedInvalidQuantity: Int,
 )
 
 /**
@@ -44,6 +60,15 @@ data class BacktestEngineResult(
  * (commission, slippage) are applied at the fill, not at the signal. A position still open at the
  * final bar is force-closed at that bar's close (no next-bar open exists to fill at), so every
  * persisted trade always has both an entry and an exit - there is no open/dangling trade state.
+ *
+ * ATR risk management (optional, see RiskManagementConfig) adds a second, independent no-lookahead
+ * invariant: the stop level checked against bar i's low must be the value finalized through bar
+ * i-1; bar i's own high/close/ATR may only update the stop for use starting bar i+1. The entry bar
+ * itself is exempt from the stop check entirely (its own pre-fill price movement can never trigger
+ * a stop), though its high still feeds the first trailing-stop update. A stop breach is a same-bar
+ * fill (checked against bar.low, filled within that same bar) - deliberately different from a
+ * strategy signal exit, which stays a next-bar-open fill; if a pending signal exit already resolved
+ * at step 1, the position is already FLAT by the time the stop check runs, so the signal exit wins.
  */
 object BacktestEngine {
 
@@ -57,19 +82,50 @@ object BacktestEngine {
         firstTradableIndex: Int,
         strategy: BacktestStrategy,
         initialCapital: BigDecimal,
-        quantity: BigDecimal,
+        quantity: BigDecimal? = null,
         commissionPerOrder: BigDecimal,
         slippageBps: Int,
+        riskPercentPerTrade: BigDecimal? = null,
+        riskManagementConfig: RiskManagementConfig? = null,
     ): BacktestEngineResult {
         require(firstTradableIndex in candles.indices) { "firstTradableIndex out of range" }
+        require((quantity != null) != (riskPercentPerTrade != null)) {
+            "exactly one of quantity or riskPercentPerTrade must be supplied"
+        }
+        require(riskManagementConfig == null || firstTradableIndex >= riskManagementConfig.atrPeriod) {
+            "firstTradableIndex must be >= riskManagementConfig.atrPeriod"
+        }
 
         val slippageFraction = BigDecimal(slippageBps).divide(BigDecimal(10_000), INTERNAL_SCALE, RoundingMode.HALF_UP)
+
+        // Computed once, only when enabled - never run on the disabled hot path.
+        val atrSeries: List<Double>? = riskManagementConfig?.let {
+            Atr.calculate(
+                highs = candles.map { c -> c.high.toDouble() },
+                lows = candles.map { c -> c.low.toDouble() },
+                closes = candles.map { c -> c.close.toDouble() },
+                period = it.atrPeriod,
+            )
+        }
+        // Atr.calculate(...)[0] aligns to original candle index atrPeriod (verified against
+        // AdxCalculator's identical use of Atr.trueRange + Ema.wilderSmooth). BigDecimal.valueOf,
+        // never the BigDecimal(Double) constructor, to avoid capturing the binary FP expansion.
+        fun atrAt(candleIndex: Int): BigDecimal? {
+            val series = atrSeries ?: return null
+            val idx = candleIndex - riskManagementConfig!!.atrPeriod
+            return if (idx in series.indices) BigDecimal.valueOf(series[idx]) else null
+        }
 
         var cash = initialCapital
         var state = ExecutionState.FLAT
         var pendingAction: StrategyAction? = null
         var openEntryTimestamp: Instant? = null
         var openEntryPrice: BigDecimal? = null
+        var openQuantity: BigDecimal? = null
+        var entryIndex: Int? = null
+        var openInitialStopPrice: BigDecimal? = null
+        var openCurrentStopPrice: BigDecimal? = null
+        var openHighestHighSinceEntry: BigDecimal? = null
 
         val trades = mutableListOf<Trade>()
         val equityCurve = mutableListOf<EquityPoint>()
@@ -78,11 +134,13 @@ object BacktestEngine {
         var entrySignalsGenerated = 0
         var exitSignalsGenerated = 0
         var entriesSkippedInsufficientCash = 0
+        var entriesSkippedInvalidQuantity = 0
 
         fun closePosition(fillPrice: BigDecimal, exitTimestamp: Instant, exitReason: ExitReason) {
             val entryPrice = requireNotNull(openEntryPrice)
             val entryTimestamp = requireNotNull(openEntryTimestamp)
-            val proceeds = quantity.multiply(fillPrice).subtract(commissionPerOrder)
+            val tradeQuantity = requireNotNull(openQuantity)
+            val proceeds = tradeQuantity.multiply(fillPrice).subtract(commissionPerOrder)
             cash = cash.add(proceeds)
             trades.add(
                 buildTrade(
@@ -91,14 +149,21 @@ object BacktestEngine {
                     entryPrice = entryPrice,
                     exitTimestamp = exitTimestamp,
                     exitPrice = fillPrice,
-                    quantity = quantity,
+                    quantity = tradeQuantity,
                     commissionPerOrder = commissionPerOrder,
                     exitReason = exitReason,
+                    initialStopPrice = openInitialStopPrice,
+                    finalStopPrice = openCurrentStopPrice,
                 ),
             )
             state = ExecutionState.FLAT
             openEntryTimestamp = null
             openEntryPrice = null
+            openQuantity = null
+            entryIndex = null
+            openInitialStopPrice = null
+            openCurrentStopPrice = null
+            openHighestHighSinceEntry = null
         }
 
         for (i in firstTradableIndex until candles.size) {
@@ -108,17 +173,43 @@ object BacktestEngine {
             when (pendingAction) {
                 StrategyAction.ENTER_LONG -> {
                     val fillPrice = bar.open.multiply(BigDecimal.ONE.add(slippageFraction))
-                    val cost = quantity.multiply(fillPrice).add(commissionPerOrder)
-                    if (cash >= cost) {
-                        cash = cash.subtract(cost)
-                        state = ExecutionState.IN_POSITION
-                        openEntryTimestamp = bar.timestamp
-                        openEntryPrice = fillPrice
-                    } else {
-                        entriesSkippedInsufficientCash++
+                    val atrAtSignal = if (riskManagementConfig != null) atrAt(i - 1) else null
+                    val resolvedQuantity = when {
+                        quantity != null -> quantity
+                        atrAtSignal != null -> computeRiskBasedQuantity(
+                            cash = cash,
+                            atrAtSignal = atrAtSignal,
+                            riskPercent = requireNotNull(riskPercentPerTrade),
+                            initialStopMultiplier = riskManagementConfig!!.initialStopMultiplier,
+                        )
+                        else -> null
                     }
-                    // insufficient cash: the entry is silently skipped (visible in the result as
-                    // fewer trades than entrySignalsGenerated), not an error.
+                    if (resolvedQuantity == null) {
+                        entriesSkippedInvalidQuantity++
+                    } else {
+                        val cost = resolvedQuantity.multiply(fillPrice).add(commissionPerOrder)
+                        if (cash >= cost) {
+                            cash = cash.subtract(cost)
+                            state = ExecutionState.IN_POSITION
+                            openEntryTimestamp = bar.timestamp
+                            openEntryPrice = fillPrice
+                            openQuantity = resolvedQuantity
+                            entryIndex = i
+                            if (riskManagementConfig != null && atrAtSignal != null) {
+                                val stop = fillPrice.subtract(riskManagementConfig.initialStopMultiplier.multiply(atrAtSignal))
+                                openInitialStopPrice = stop
+                                openCurrentStopPrice = stop
+                                // Fill may exceed bar.high due to slippage on the buy - the highest
+                                // price "since entry" must account for the actual fill, not just the
+                                // bar's own printed high.
+                                openHighestHighSinceEntry = fillPrice.max(bar.high)
+                            }
+                        } else {
+                            entriesSkippedInsufficientCash++
+                        }
+                    }
+                    // insufficient cash / invalid quantity: the entry is silently skipped (visible in
+                    // the result via the two counters above), not an error.
                 }
                 StrategyAction.EXIT_LONG -> {
                     val fillPrice = bar.open.multiply(BigDecimal.ONE.subtract(slippageFraction))
@@ -128,6 +219,18 @@ object BacktestEngine {
             }
             pendingAction = null
 
+            // 1.5. ATR stop/trailing-stop check - same-bar fill, gated on IN_POSITION and the
+            // entry-bar exemption (i != entryIndex). Must run BEFORE step 2's force-close, so a stop
+            // breach on the literal final bar is attributed to ATR_STOP, not END_OF_PERIOD.
+            if (state == ExecutionState.IN_POSITION && riskManagementConfig != null && i != entryIndex) {
+                val stopPrice = requireNotNull(openCurrentStopPrice)
+                if (bar.low <= stopPrice) {
+                    val stopFillBase = if (bar.open <= stopPrice) bar.open else stopPrice
+                    val stopFillPrice = stopFillBase.multiply(BigDecimal.ONE.subtract(slippageFraction))
+                    closePosition(stopFillPrice, bar.timestamp, ExitReason.ATR_STOP)
+                }
+            }
+
             // 2. Force-close on the FINAL bar if still open - no next-bar open exists to fill at.
             if (i == candles.size - 1 && state == ExecutionState.IN_POSITION) {
                 val fillPrice = bar.close.multiply(BigDecimal.ONE.subtract(slippageFraction))
@@ -135,7 +238,7 @@ object BacktestEngine {
             }
 
             // 3. Record this bar's equity: cash plus the mark-to-market value of any open position.
-            val markToMarket = if (state == ExecutionState.IN_POSITION) quantity.multiply(bar.close) else BigDecimal.ZERO
+            val markToMarket = if (state == ExecutionState.IN_POSITION) requireNotNull(openQuantity).multiply(bar.close) else BigDecimal.ZERO
             val equity = cash.add(markToMarket).setScale(PRICE_SCALE, RoundingMode.HALF_UP)
             if (equity > peakEquity) peakEquity = equity
             if (peakEquity.signum() > 0) {
@@ -152,6 +255,20 @@ object BacktestEngine {
                     equity = equity,
                 ),
             )
+
+            // 3.5. Trailing-stop ratchet update using THIS bar's own high/ATR, for use starting i+1.
+            // Deliberately uses atrAt(i) (this bar's just-closed ATR), unlike the initial stop above
+            // which used atrAt(i-1) - the initial stop is a pre-fill decision (no lookahead allowed),
+            // while this is a post-close, next-bar-only recalculation (this bar's own data is fair
+            // game for deciding what happens starting the next bar).
+            if (state == ExecutionState.IN_POSITION && riskManagementConfig != null && riskManagementConfig.trailingEnabled) {
+                openHighestHighSinceEntry = requireNotNull(openHighestHighSinceEntry).max(bar.high)
+                val atrNow = atrAt(i)
+                if (atrNow != null) {
+                    val candidateStop = openHighestHighSinceEntry!!.subtract(riskManagementConfig.trailingStopMultiplier.multiply(atrNow))
+                    openCurrentStopPrice = requireNotNull(openCurrentStopPrice).max(candidateStop)
+                }
+            }
 
             // 4. Evaluate a NEW signal from this bar's close, to fill at the NEXT bar's open.
             //    Skipped on the final bar - there is no next bar to fill at.
@@ -215,7 +332,31 @@ object BacktestEngine {
             entrySignalsGenerated = entrySignalsGenerated,
             exitSignalsGenerated = exitSignalsGenerated,
             entriesSkippedInsufficientCash = entriesSkippedInsufficientCash,
+            entriesSkippedInvalidQuantity = entriesSkippedInvalidQuantity,
         )
+    }
+
+    /**
+     * riskPerUnit = initialStopMultiplier * atrAtSignal - the fill price cancels out algebraically
+     * (stopPrice = fillPrice - initialStopMultiplier*atr, so fillPrice - stopPrice is exactly that
+     * product), so the degenerate-ATR/multiplier guard can run before any fill price is known.
+     * Commission/slippage are deliberately NOT netted out of the risk budget (CLAUDE.md Section 18)
+     * - the budget covers price risk only, so a realized stop-loss will run slightly larger than the
+     * nominal riskPercent. FLOOR, never HALF_UP, is the one deliberate departure from this engine's
+     * otherwise-universal rounding - rounding up here would let realized price-risk exceed the
+     * declared budget.
+     */
+    private fun computeRiskBasedQuantity(
+        cash: BigDecimal,
+        atrAtSignal: BigDecimal,
+        riskPercent: BigDecimal,
+        initialStopMultiplier: BigDecimal,
+    ): BigDecimal? {
+        val riskPerUnit = initialStopMultiplier.multiply(atrAtSignal)
+        if (riskPerUnit.signum() <= 0) return null
+        val riskBudget = cash.multiply(riskPercent).divide(HUNDRED, INTERNAL_SCALE, RoundingMode.HALF_UP)
+        val quantity = riskBudget.divide(riskPerUnit, INTERNAL_SCALE, RoundingMode.FLOOR)
+        return if (quantity.signum() <= 0) null else quantity
     }
 
     private fun buildTrade(
@@ -227,6 +368,8 @@ object BacktestEngine {
         quantity: BigDecimal,
         commissionPerOrder: BigDecimal,
         exitReason: ExitReason,
+        initialStopPrice: BigDecimal?,
+        finalStopPrice: BigDecimal?,
     ): Trade {
         val grossPnl = exitPrice.subtract(entryPrice).multiply(quantity)
         val totalCommission = commissionPerOrder.multiply(BigDecimal(2))
@@ -252,6 +395,8 @@ object BacktestEngine {
             netPnl = netPnl.setScale(PRICE_SCALE, RoundingMode.HALF_UP),
             returnPercent = returnPercent,
             exitReason = exitReason,
+            initialStopPrice = initialStopPrice?.setScale(PRICE_SCALE, RoundingMode.HALF_UP),
+            finalStopPrice = finalStopPrice?.setScale(PRICE_SCALE, RoundingMode.HALF_UP),
         )
     }
 }

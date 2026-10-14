@@ -21,4 +21,8 @@ data class Trade(
     val netPnl: BigDecimal,
     val returnPercent: BigDecimal,
     val exitReason: ExitReason,
+    // Null unless the owning run had ATR risk management enabled. finalStopPrice > initialStopPrice
+    // means the trailing stop ratcheted up at least once before this trade closed (see ExitReason).
+    val initialStopPrice: BigDecimal? = null,
+    val finalStopPrice: BigDecimal? = null,
 )

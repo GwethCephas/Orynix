@@ -2,11 +2,13 @@ package com.cephCoding.orynix.backtesting.service
 
 import com.cephCoding.orynix.backtesting.domain.BacktestRun
 import com.cephCoding.orynix.backtesting.domain.EquityPoint
+import com.cephCoding.orynix.backtesting.domain.PositionSizingType
 import com.cephCoding.orynix.backtesting.domain.StrategyType
 import com.cephCoding.orynix.backtesting.domain.Trade
 import com.cephCoding.orynix.backtesting.domain.TradeDirection
 import com.cephCoding.orynix.backtesting.dto.BacktestRequest
 import com.cephCoding.orynix.backtesting.engine.BacktestEngine
+import com.cephCoding.orynix.backtesting.engine.RiskManagementConfig
 import com.cephCoding.orynix.backtesting.model.BacktestEquityPointEntity
 import com.cephCoding.orynix.backtesting.model.BacktestRunEntity
 import com.cephCoding.orynix.backtesting.model.BacktestTradeEntity
@@ -62,10 +64,11 @@ class BacktestService(
     fun createBacktest(userId: UUID, request: BacktestRequest): BacktestRun {
         validateRange(request.fromDate, request.toDate)
         val parameters = validateStrategyParameters(request)
+        val riskParams = validateRiskManagementParameters(request)
         val instrument = InstrumentResolver.resolve(request.symbol)
         validateAccountCurrency(instrument, request.accountCurrency)
 
-        val warmupPeriod = warmupPeriod(request.strategyType, parameters)
+        val warmupPeriod = warmupPeriod(request.strategyType, parameters, riskParams.riskManagementConfig)
         val warmupFromDate = computeWarmupFromDate(request.fromDate, warmupPeriod)
 
         val candles = marketDataService
@@ -80,16 +83,22 @@ class BacktestService(
 
         val strategy = buildStrategy(request.strategyType, parameters, candles)
 
+        val fixedQuantity = (riskParams.positionSizing as? PositionSizingKind.FixedQuantity)?.quantity
+        val riskPercent = (riskParams.positionSizing as? PositionSizingKind.RiskBased)?.riskPercent
+
         val result = BacktestEngine.run(
             candles = candles,
             firstTradableIndex = firstTradableIndex,
             strategy = strategy,
             initialCapital = request.initialCapital,
-            quantity = request.quantity,
+            quantity = fixedQuantity,
             commissionPerOrder = request.commissionPerOrder,
             slippageBps = request.slippageBps,
+            riskPercentPerTrade = riskPercent,
+            riskManagementConfig = riskParams.riskManagementConfig,
         )
 
+        val config = riskParams.riskManagementConfig
         val run = BacktestRun(
             id = UUID.randomUUID(),
             symbol = instrument.displaySymbol,
@@ -113,8 +122,8 @@ class BacktestService(
             direction = TradeDirection.LONG,
             initialCapital = request.initialCapital,
             accountCurrency = request.accountCurrency,
-            positionSizingType = POSITION_SIZING_TYPE,
-            quantity = request.quantity,
+            positionSizingType = request.positionSizingType,
+            quantity = fixedQuantity,
             commissionPerOrder = request.commissionPerOrder,
             slippageBps = request.slippageBps,
             completedAt = Instant.now(),
@@ -132,6 +141,13 @@ class BacktestService(
             entrySignalsGenerated = result.entrySignalsGenerated,
             exitSignalsGenerated = result.exitSignalsGenerated,
             entriesSkippedInsufficientCash = result.entriesSkippedInsufficientCash,
+            entriesSkippedInvalidQuantity = result.entriesSkippedInvalidQuantity,
+            riskPercentPerTrade = riskPercent,
+            atrRiskManagementEnabled = config != null,
+            atrPeriod = config?.atrPeriod,
+            atrInitialStopMultiplier = config?.initialStopMultiplier,
+            atrTrailingStopEnabled = config?.trailingEnabled ?: false,
+            atrTrailingStopMultiplier = if (config?.trailingEnabled == true) config.trailingStopMultiplier else null,
         )
 
         persist(userId, run, result.trades, result.equityCurve)
@@ -294,8 +310,8 @@ class BacktestService(
         }
     }
 
-    private fun warmupPeriod(strategyType: StrategyType, parameters: StrategyParameters): Int =
-        when (strategyType) {
+    private fun warmupPeriod(strategyType: StrategyType, parameters: StrategyParameters, riskManagementConfig: RiskManagementConfig?): Int {
+        val strategyWarmup = when (strategyType) {
             StrategyType.MOVING_AVERAGE_CROSSOVER -> requireNotNull(parameters.slowPeriod)
             StrategyType.RSI_THRESHOLD -> requireNotNull(parameters.rsiPeriod) + 1
             StrategyType.MACD_CROSSOVER -> requireNotNull(parameters.slowPeriod) + requireNotNull(parameters.signalPeriod) - 1
@@ -304,6 +320,91 @@ class BacktestService(
                 maxOf(requireNotNull(parameters.donchianEntryPeriod), requireNotNull(parameters.donchianExitPeriod)) + 1
             StrategyType.ADX_TREND -> 2 * requireNotNull(parameters.adxPeriod)
         }
+        // Atr.calculate(...)[0] aligns to original candle index atrPeriod (CLAUDE.md Section 18) -
+        // folding this into the single warmupPeriod value feeds both computeWarmupFromDate and the
+        // firstTradableIndex >= warmupPeriod floor below, so "ATR unavailable at entry" is handled
+        // the same way as every other insufficient-history case: InsufficientCandleDataException,
+        // never a fabricated value.
+        return if (riskManagementConfig != null) maxOf(strategyWarmup, riskManagementConfig.atrPeriod) else strategyWarmup
+    }
+
+    /**
+     * Cross-strategy, always-applicable - unlike validateStrategyParameters/rejectFieldsFor, which
+     * is strategy-shape-scoped. Reuses InvalidStrategyParametersException throughout (same grouped
+     * 400 handler) rather than introducing a second exception type, since this is the same
+     * "reject, don't silently ignore" policy applied to a new axis (CLAUDE.md Section 18).
+     */
+    private fun validateRiskManagementParameters(request: BacktestRequest): RiskManagementParameters {
+        val sizing = when (request.positionSizingType) {
+            PositionSizingType.FIXED_QUANTITY -> {
+                if (request.riskPercentPerTrade != null) {
+                    throw InvalidStrategyParametersException("riskPercentPerTrade is not applicable to FIXED_QUANTITY sizing")
+                }
+                val qty = request.quantity
+                if (qty == null || qty.signum() <= 0) {
+                    throw InvalidStrategyParametersException("quantity is required and must be positive for FIXED_QUANTITY sizing")
+                }
+                PositionSizingKind.FixedQuantity(qty)
+            }
+            PositionSizingType.RISK_BASED_ATR -> {
+                if (request.quantity != null) {
+                    throw InvalidStrategyParametersException("quantity is not applicable to RISK_BASED_ATR sizing")
+                }
+                val riskPercent = request.riskPercentPerTrade
+                if (riskPercent == null || riskPercent.signum() <= 0 || riskPercent.compareTo(HUNDRED) > 0) {
+                    throw InvalidStrategyParametersException("riskPercentPerTrade is required and must be between 0 and 100 for RISK_BASED_ATR sizing")
+                }
+                if (!request.atrRiskManagementEnabled) {
+                    throw InvalidStrategyParametersException("atrRiskManagementEnabled must be true when positionSizingType is RISK_BASED_ATR")
+                }
+                PositionSizingKind.RiskBased(riskPercent)
+            }
+        }
+
+        if (!request.atrRiskManagementEnabled) {
+            if (request.atrPeriod != null || request.atrInitialStopMultiplier != null ||
+                request.atrTrailingStopEnabled || request.atrTrailingStopMultiplier != null
+            ) {
+                throw InvalidStrategyParametersException(
+                    "atrPeriod/atrInitialStopMultiplier/atrTrailingStopEnabled/atrTrailingStopMultiplier are not applicable when atrRiskManagementEnabled is false",
+                )
+            }
+            return RiskManagementParameters(sizing, null)
+        }
+
+        val atrPeriod = request.atrPeriod ?: DEFAULT_ATR_PERIOD
+        val initialMultiplier = request.atrInitialStopMultiplier ?: DEFAULT_INITIAL_STOP_MULTIPLIER
+        if (atrPeriod <= 0) throw InvalidStrategyParametersException("atrPeriod must be positive")
+        if (initialMultiplier.signum() <= 0) throw InvalidStrategyParametersException("atrInitialStopMultiplier must be positive")
+
+        val trailingMultiplier = if (request.atrTrailingStopEnabled) {
+            val m = request.atrTrailingStopMultiplier ?: DEFAULT_TRAILING_STOP_MULTIPLIER
+            if (m.signum() <= 0) {
+                throw InvalidStrategyParametersException("atrTrailingStopMultiplier must be positive when atrTrailingStopEnabled is true")
+            }
+            m
+        } else {
+            if (request.atrTrailingStopMultiplier != null) {
+                throw InvalidStrategyParametersException("atrTrailingStopMultiplier is not applicable when atrTrailingStopEnabled is false")
+            }
+            BigDecimal.ZERO
+        }
+
+        return RiskManagementParameters(
+            sizing,
+            RiskManagementConfig(atrPeriod, initialMultiplier, request.atrTrailingStopEnabled, trailingMultiplier),
+        )
+    }
+
+    private sealed interface PositionSizingKind {
+        data class FixedQuantity(val quantity: BigDecimal) : PositionSizingKind
+        data class RiskBased(val riskPercent: BigDecimal) : PositionSizingKind
+    }
+
+    private data class RiskManagementParameters(
+        val positionSizing: PositionSizingKind,
+        val riskManagementConfig: RiskManagementConfig?,
+    )
 
     private fun buildStrategy(strategyType: StrategyType, parameters: StrategyParameters, candles: List<Candle>): BacktestStrategy =
         when (strategyType) {
@@ -359,8 +460,11 @@ class BacktestService(
     companion object {
         private const val MAX_BACKTEST_RANGE_DAYS = 1825L
         private const val WARMUP_BUFFER_DAYS = 10L
-        private const val POSITION_SIZING_TYPE = "FIXED_QUANTITY"
         private const val STOCK_ACCOUNT_CURRENCY = "USD"
+        private val HUNDRED = BigDecimal(100)
+        private const val DEFAULT_ATR_PERIOD = 14
+        private val DEFAULT_INITIAL_STOP_MULTIPLIER = BigDecimal("2.0")
+        private val DEFAULT_TRAILING_STOP_MULTIPLIER = BigDecimal("2.0")
 
         /**
          * A heuristic, not a correctness guarantee -- generous enough to absorb weekends/holidays

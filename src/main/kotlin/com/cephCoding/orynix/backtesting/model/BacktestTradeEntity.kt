@@ -60,6 +60,13 @@ class BacktestTradeEntity(
 
     @Column(name = "exit_reason", nullable = false)
     val exitReason: String,
+
+    // Null unless the owning run had ATR risk management enabled (CLAUDE.md Section 18).
+    @Column(name = "initial_stop_price")
+    val initialStopPrice: BigDecimal?,
+
+    @Column(name = "final_stop_price")
+    val finalStopPrice: BigDecimal?,
 ) {
     fun toDomain() = Trade(
         sequenceNumber = sequenceNumber,
@@ -74,6 +81,8 @@ class BacktestTradeEntity(
         netPnl = netPnl,
         returnPercent = returnPercent,
         exitReason = ExitReason.valueOf(exitReason),
+        initialStopPrice = initialStopPrice,
+        finalStopPrice = finalStopPrice,
     )
 
     companion object {
@@ -91,6 +100,8 @@ class BacktestTradeEntity(
             netPnl = trade.netPnl,
             returnPercent = trade.returnPercent,
             exitReason = trade.exitReason.name,
+            initialStopPrice = trade.initialStopPrice,
+            finalStopPrice = trade.finalStopPrice,
         )
     }
 }

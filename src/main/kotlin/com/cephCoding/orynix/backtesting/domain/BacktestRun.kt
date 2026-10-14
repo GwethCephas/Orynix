@@ -39,8 +39,11 @@ data class BacktestRun(
     val direction: TradeDirection,
     val initialCapital: BigDecimal,
     val accountCurrency: String,
-    val positionSizingType: String,
-    val quantity: BigDecimal,
+    val positionSizingType: PositionSizingType,
+    // Nullable: under RISK_BASED_ATR sizing there is no run-level fixed quantity - it is computed
+    // per trade and recorded on Trade/backtest_trades instead. A domain-meaning null (mirrors
+    // winRate/profitFactor), not a schema-versioning one.
+    val quantity: BigDecimal?,
     val commissionPerOrder: BigDecimal,
     val slippageBps: Int,
     val completedAt: Instant,
@@ -60,4 +63,16 @@ data class BacktestRun(
     val entrySignalsGenerated: Int?,
     val exitSignalsGenerated: Int?,
     val entriesSkippedInsufficientCash: Int?,
+    // entriesSkippedInvalidQuantity is nullable for the same schema-versioning reason as the four
+    // fields above (runs persisted before ATR risk management existed have no value), not because
+    // it shares their "only one skip reason" framing - it is a second, independent skip reason.
+    val entriesSkippedInvalidQuantity: Int?,
+    // ATR risk management config, echoed as-validated (CLAUDE.md Section 18). All null when
+    // atrRiskManagementEnabled is false.
+    val riskPercentPerTrade: BigDecimal?,
+    val atrRiskManagementEnabled: Boolean,
+    val atrPeriod: Int?,
+    val atrInitialStopMultiplier: BigDecimal?,
+    val atrTrailingStopEnabled: Boolean,
+    val atrTrailingStopMultiplier: BigDecimal?,
 )
