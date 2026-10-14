@@ -18,6 +18,10 @@ import java.util.UUID
  */
 data class BacktestRun(
     val id: UUID,
+    // Nullable: present only when the request supplied accountProfileId (CLAUDE.md Section 19) -
+    // a backtest created without a profile has none to reference, which is the common/default
+    // case and not a schema-versioning null.
+    val accountProfileId: UUID?,
     val symbol: String,
     val assetType: AssetType,
     val timeframe: String,

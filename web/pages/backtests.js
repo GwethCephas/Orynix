@@ -1,4 +1,4 @@
-import { createBacktest, listBacktests, getBacktest, getBacktestTrades, getCandles, ApiError } from "../api.js";
+import { createBacktest, listBacktests, getBacktest, getBacktestTrades, getCandles, listTradingAccountProfiles, ApiError } from "../api.js";
 import { getCurrentSymbol, withCache } from "../state.js";
 import { createSectionState, loadInto, renderStateBlock, skeletonHtml } from "../components/stateBlock.js";
 import { metricCardHtml } from "../components/metricCard.js";
@@ -92,6 +92,7 @@ export function mount(container) {
   const historySection = { value: createSectionState() };
   let sizingCheck = null; // { symbol, price, asOfDate } | { symbol, unavailable: true } | null
   let equityChart = null;
+  let profiles = [];
 
   const initialSymbol = getCurrentSymbol() || "";
   const initialAssetClass = isForexSymbol(initialSymbol) ? "FOREX" : "STOCK";
@@ -226,8 +227,16 @@ export function mount(container) {
           <h3 class="backtest-subheading">Capital &amp; costs</h3>
           <div class="backtest-form-grid">
             <label class="backtest-field">
+              <span>Trading account profile (optional)</span>
+              <select name="accountProfileId">
+                <option value="">None - enter initial capital manually</option>
+              </select>
+              <small class="backtest-field-hint" data-hint="profile">Manually-entered, not broker-verified - see the Trading Accounts page.</small>
+            </label>
+            <label class="backtest-field">
               <span>Initial capital</span>
               <input type="number" name="initialCapital" min="0" step="any" value="10000">
+              <small class="backtest-field-hint" data-hint="initialCapital"></small>
             </label>
             <label class="backtest-field">
               <span>Account currency</span>
@@ -324,6 +333,9 @@ export function mount(container) {
   const currencyInput = form.querySelector('[name="accountCurrency"]');
   const currencyHint = form.querySelector('[data-hint="currency"]');
   const symbolHint = form.querySelector('[data-hint="symbol"]');
+  const profileSelect = form.querySelector('[name="accountProfileId"]');
+  const initialCapitalInput = form.querySelector('[name="initialCapital"]');
+  const initialCapitalHint = form.querySelector('[data-hint="initialCapital"]');
   const quantityLabel = form.querySelector('[data-label="quantity"]');
   const strategySelect = form.querySelector('[name="strategyType"]');
   const strategyGroups = form.querySelectorAll("[data-strategy-group]");
@@ -377,6 +389,52 @@ export function mount(container) {
     }
   }
 
+  // ---------- Trading account profile selection ----------
+  // A selected profile seeds initialCapital only when the field is left blank (CLAUDE.md Section
+  // 19's precedence rule: explicit initialCapital always wins) - this never rewrites a value the
+  // user has already typed, only the placeholder/hint shown while the field is empty.
+  function syncInitialCapitalHint() {
+    const selected = profiles.find((p) => p.id === profileSelect.value);
+    if (!selected) {
+      initialCapitalInput.placeholder = "10000";
+      initialCapitalHint.textContent = "";
+      return;
+    }
+    initialCapitalInput.placeholder = String(selected.balance);
+    initialCapitalHint.textContent =
+      `Leave blank to use "${selected.name}"'s saved balance (${formatMoney(selected.balance, selected.accountCurrency)}, not broker-verified). ` +
+      `Entering a value here overrides the profile's balance for this run only.`;
+  }
+
+  async function loadProfiles() {
+    try {
+      profiles = await listTradingAccountProfiles();
+    } catch {
+      profiles = [];
+    }
+    if (!alive) return;
+    const previouslySelected = profileSelect.value;
+    profileSelect.innerHTML =
+      `<option value="">None - enter initial capital manually</option>` +
+      profiles
+        .map(
+          (p) =>
+            `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.accountCurrency)} ${formatNumber(p.balance, 2)})</option>`
+        )
+        .join("");
+    if (profiles.some((p) => p.id === previouslySelected)) {
+      profileSelect.value = previouslySelected;
+    }
+    syncInitialCapitalHint();
+    renderSizingPanel();
+  }
+
+  profileSelect.addEventListener("change", () => {
+    syncInitialCapitalHint();
+    renderSizingPanel();
+  });
+  initialCapitalInput.addEventListener("input", syncInitialCapitalHint);
+
   assetToggleBtns.forEach((btn) => btn.addEventListener("click", () => setAssetClass(btn.dataset.asset)));
 
   symbolInput.addEventListener("input", () => {
@@ -429,6 +487,8 @@ export function mount(container) {
   syncSizingVisibility();
   syncRiskVisibility();
   syncTrailingVisibility();
+  syncInitialCapitalHint();
+  loadProfiles();
 
   // ---------- Position-sizing preview ----------
 
@@ -464,9 +524,12 @@ export function mount(container) {
   function renderSizingPanel() {
     const symbol = symbolInput.value.trim().toUpperCase();
     const quantityRaw = form.querySelector('[name="quantity"]').value;
-    const capitalRaw = form.querySelector('[name="initialCapital"]').value;
+    const capitalRaw = initialCapitalInput.value;
+    const selectedProfile = profiles.find((p) => p.id === profileSelect.value);
     const quantity = Number(quantityRaw);
-    const initialCapital = Number(capitalRaw);
+    // Mirrors the backend's own precedence rule for the preview: blank -> selected profile's
+    // balance, otherwise the typed value always wins (CLAUDE.md Section 19).
+    const initialCapital = capitalRaw !== "" ? Number(capitalRaw) : selectedProfile ? Number(selectedProfile.balance) : NaN;
     const currency = currencyInput.value || "USD";
 
     // Risk-based sizing computes the actual quantity per trade from account equity, the ATR at
@@ -563,7 +626,8 @@ export function mount(container) {
       donchianExitPeriod: form.querySelector('[name="donchianExitPeriod"]').value,
       adxPeriod: form.querySelector('[name="adxPeriod"]').value,
       adxThreshold: form.querySelector('[name="adxThreshold"]').value,
-      initialCapital: form.querySelector('[name="initialCapital"]').value,
+      accountProfileId: profileSelect.value,
+      initialCapital: initialCapitalInput.value,
       accountCurrency: currencyInput.value,
       positionSizingType: sizingSelect.value,
       quantity: form.querySelector('[name="quantity"]').value,
@@ -628,7 +692,13 @@ export function mount(container) {
     if (!values.accountCurrency) {
       errors.push("Enter a valid symbol first so the required account currency can be determined.");
     }
-    if (!(Number(values.initialCapital) > 0)) errors.push("Initial capital must be a positive number.");
+    // Required unless a trading account profile is selected to seed it (CLAUDE.md Section 19) -
+    // when a value IS entered, it always overrides the profile and must still be positive.
+    if (values.initialCapital !== "") {
+      if (!(Number(values.initialCapital) > 0)) errors.push("Initial capital must be a positive number.");
+    } else if (!values.accountProfileId) {
+      errors.push("Enter an initial capital, or select a trading account profile to supply one.");
+    }
     if (values.positionSizingType === "FIXED_QUANTITY") {
       if (!(Number(values.quantity) > 0)) errors.push("Quantity must be a positive number.");
     } else {
@@ -735,7 +805,8 @@ export function mount(container) {
       toDate: values.toDate,
       strategyType: values.strategyType,
       ...strategyFields,
-      initialCapital: Number(values.initialCapital),
+      accountProfileId: values.accountProfileId || null,
+      initialCapital: values.initialCapital !== "" ? Number(values.initialCapital) : null,
       accountCurrency: values.accountCurrency,
       positionSizingType: values.positionSizingType,
       ...sizingFields,
@@ -858,7 +929,13 @@ export function mount(container) {
         </p>
 
         <div class="metric-grid">
-          ${metricCardHtml({ label: "Initial capital", value: formatMoney(run.initialCapital, currency) })}
+          ${metricCardHtml({
+            label: "Initial capital",
+            value: formatMoney(run.initialCapital, currency),
+            sublabel: run.accountProfileId
+              ? `From profile: ${escapeHtml(profiles.find((p) => p.id === run.accountProfileId)?.name || "saved account")}`
+              : null,
+          })}
           ${metricCardHtml({ label: "Final equity", value: formatMoney(run.finalEquity, currency) })}
           ${metricCardHtml({ label: "Net P&amp;L", value: formatMoney(run.netPnl, currency), colorClass: pnlClass(run.netPnl) })}
           ${metricCardHtml({ label: "Total return", value: formatPercent(run.netReturnPercent), colorClass: pnlClass(run.netReturnPercent) })}

@@ -147,3 +147,27 @@ export function getBacktest(backtestId) {
 export function getBacktestTrades(backtestId) {
   return apiRequest(`/api/v1/backtests/${encodeURIComponent(backtestId)}/trades`, { useAuth: true });
 }
+
+export function createTradingAccountProfile(request) {
+  return apiRequest("/api/v1/trading-accounts", { method: "POST", body: request, useAuth: true });
+}
+
+export function listTradingAccountProfiles() {
+  return apiRequest("/api/v1/trading-accounts", { useAuth: true });
+}
+
+export function getTradingAccountProfile(profileId) {
+  return apiRequest(`/api/v1/trading-accounts/${encodeURIComponent(profileId)}`, { useAuth: true });
+}
+
+export function updateTradingAccountProfile(profileId, request) {
+  return apiRequest(`/api/v1/trading-accounts/${encodeURIComponent(profileId)}`, { method: "PUT", body: request, useAuth: true });
+}
+
+export function archiveTradingAccountProfile(profileId) {
+  return apiRequest(`/api/v1/trading-accounts/${encodeURIComponent(profileId)}`, { method: "DELETE", useAuth: true });
+}
+
+export function calculateRisk(request) {
+  return apiRequest("/api/v1/risk-calculations", { method: "POST", body: request, useAuth: true });
+}

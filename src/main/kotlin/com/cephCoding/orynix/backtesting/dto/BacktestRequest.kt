@@ -10,10 +10,19 @@ import jakarta.validation.constraints.Positive
 import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.util.UUID
 
 data class BacktestRequest(
     @field:NotBlank
     val symbol: String,
+
+    // Optional (CLAUDE.md Section 19). When supplied, the referenced trading account profile's
+    // balance seeds initialCapital IF initialCapital is omitted - an explicit initialCapital in
+    // the same request always wins (the one deliberate exception to this DTO's usual "reject
+    // conflicting/inapplicable input" policy, since this is a default-sourcing relationship, not
+    // two mutually exclusive strategy branches). Ownership-checked in BacktestService exactly like
+    // every other per-user resource; ownership failure is the standard 404, never leaked as a 400.
+    val accountProfileId: UUID? = null,
 
     @field:NotNull
     val fromDate: LocalDate,
@@ -40,9 +49,13 @@ data class BacktestRequest(
     val adxPeriod: Int?,
     val adxThreshold: BigDecimal?,
 
-    @field:NotNull
+    // Required unless accountProfileId supplies a balance to seed it (CLAUDE.md Section 19) -
+    // Bean Validation can't express that conditional, so @NotNull is intentionally omitted here
+    // and the "required when no profile is given" check lives in BacktestService instead;
+    // @Positive still applies whenever a value IS supplied (JSR-380 constraints skip null, which
+    // is exactly the behavior wanted here).
     @field:Positive
-    val initialCapital: BigDecimal,
+    val initialCapital: BigDecimal?,
 
     @field:NotBlank
     @field:Size(min = 3, max = 3)
