@@ -28,6 +28,9 @@ class BacktestRunEntity(
     @Column(name = "user_id", nullable = false)
     val userId: UUID,
 
+    @Column(name = "account_profile_id")
+    val accountProfileId: UUID?,
+
     @Column(nullable = false)
     val symbol: String,
 
@@ -173,6 +176,7 @@ class BacktestRunEntity(
 ) {
     fun toDomain() = BacktestRun(
         id = id,
+        accountProfileId = accountProfileId,
         symbol = symbol,
         assetType = AssetType.valueOf(assetType),
         timeframe = timeframe,
@@ -226,6 +230,7 @@ class BacktestRunEntity(
         fun from(userId: UUID, run: BacktestRun) = BacktestRunEntity(
             id = run.id,
             userId = userId,
+            accountProfileId = run.accountProfileId,
             symbol = run.symbol,
             assetType = run.assetType.name,
             timeframe = run.timeframe,

@@ -33,6 +33,7 @@ import com.cephCoding.orynix.instrument.domain.Instrument
 import com.cephCoding.orynix.market.domain.Candle
 import com.cephCoding.orynix.market.domain.CandleTimeframe
 import com.cephCoding.orynix.market.service.MarketDataService
+import com.cephCoding.orynix.tradingaccount.service.TradingAccountService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -56,6 +57,7 @@ import java.util.UUID
 @Service
 class BacktestService(
     private val marketDataService: MarketDataService,
+    private val tradingAccountService: TradingAccountService,
     private val backtestRunRepository: BacktestRunRepository,
     private val backtestTradeRepository: BacktestTradeRepository,
     private val backtestEquityPointRepository: BacktestEquityPointRepository,
@@ -67,6 +69,7 @@ class BacktestService(
         val riskParams = validateRiskManagementParameters(request)
         val instrument = InstrumentResolver.resolve(request.symbol)
         validateAccountCurrency(instrument, request.accountCurrency)
+        val initialCapital = resolveInitialCapital(userId, request, request.accountCurrency)
 
         val warmupPeriod = warmupPeriod(request.strategyType, parameters, riskParams.riskManagementConfig)
         val warmupFromDate = computeWarmupFromDate(request.fromDate, warmupPeriod)
@@ -90,7 +93,7 @@ class BacktestService(
             candles = candles,
             firstTradableIndex = firstTradableIndex,
             strategy = strategy,
-            initialCapital = request.initialCapital,
+            initialCapital = initialCapital,
             quantity = fixedQuantity,
             commissionPerOrder = request.commissionPerOrder,
             slippageBps = request.slippageBps,
@@ -101,6 +104,7 @@ class BacktestService(
         val config = riskParams.riskManagementConfig
         val run = BacktestRun(
             id = UUID.randomUUID(),
+            accountProfileId = request.accountProfileId,
             symbol = instrument.displaySymbol,
             assetType = instrument.assetType,
             timeframe = CandleTimeframe.DAILY.code,
@@ -120,7 +124,7 @@ class BacktestService(
             adxPeriod = parameters.adxPeriod,
             adxThreshold = parameters.adxThreshold,
             direction = TradeDirection.LONG,
-            initialCapital = request.initialCapital,
+            initialCapital = initialCapital,
             accountCurrency = request.accountCurrency,
             positionSizingType = request.positionSizingType,
             quantity = fixedQuantity,
@@ -308,6 +312,50 @@ class BacktestService(
                 throw InvalidAccountCurrencyException("Forex backtests require accountCurrency to match the pair quote currency: ${instrument.quoteCurrency}")
             }
         }
+    }
+
+    /**
+     * One deterministic precedence rule (CLAUDE.md Section 19): when accountProfileId is supplied,
+     * its balance seeds initialCapital UNLESS the request also supplies its own initialCapital, in
+     * which case the explicit value always wins. This is a deliberate, singular exception to
+     * rejectFieldsFor's "reject conflicting/inapplicable input" policy elsewhere in this service -
+     * a profile is a default-sourcing mechanism, not a second, mutually-exclusive input mode, so
+     * "both present" is a legitimate per-run override, not a contradiction to reject. Ownership is
+     * checked via TradingAccountService.findOwnedProfile, which throws the standard
+     * TradingAccountProfileNotFoundException (404) exactly like BacktestService's own findOwned -
+     * a profile that doesn't exist or isn't owned by this user is never distinguishable from the
+     * other, consistent with every other ownership check in this codebase.
+     *
+     * accountCurrency (the caller's already-validated request.accountCurrency, matching the
+     * instrument per validateAccountCurrency) must match the profile's own accountCurrency before
+     * its balance is used - a profile's balance is denominated in its own currency, and silently
+     * reinterpreting e.g. a USD balance as JPY initialCapital for a USD/JPY backtest would corrupt
+     * the simulation's numbers without any error. This check only applies when a profile actually
+     * seeds initialCapital (request.initialCapital == null); an explicit initialCapital always
+     * wins and is trusted to already be in the request's own accountCurrency, exactly as it was
+     * before this feature existed.
+     */
+    private fun resolveInitialCapital(userId: UUID, request: BacktestRequest, accountCurrency: String): BigDecimal {
+        if (request.initialCapital != null) {
+            return request.initialCapital
+        }
+        val profileId = request.accountProfileId
+            ?: throw InvalidStrategyParametersException("initialCapital is required when accountProfileId is not supplied")
+        val profile = tradingAccountService.findOwnedProfile(userId, profileId)
+        if (profile.accountCurrency != accountCurrency) {
+            throw InvalidAccountCurrencyException(
+                "Trading account profile currency (${profile.accountCurrency}) does not match this backtest's required accountCurrency ($accountCurrency)",
+            )
+        }
+        val balance = profile.balance
+        // BacktestRequest.initialCapital carries @Positive, which only runs when a value is
+        // actually supplied - a profile-sourced balance bypasses Bean Validation entirely (a
+        // profile's balance is only required to be >= 0, see TradingAccountProfileRequest), so
+        // the same positivity requirement is re-asserted here explicitly.
+        if (balance.signum() <= 0) {
+            throw InvalidStrategyParametersException("Trading account profile balance must be positive to seed a backtest's initialCapital")
+        }
+        return balance
     }
 
     private fun warmupPeriod(strategyType: StrategyType, parameters: StrategyParameters, riskManagementConfig: RiskManagementConfig?): Int {

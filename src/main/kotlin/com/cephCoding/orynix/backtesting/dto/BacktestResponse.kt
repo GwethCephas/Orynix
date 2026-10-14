@@ -12,6 +12,7 @@ import java.util.UUID
 
 data class BacktestResponse(
     val id: UUID,
+    val accountProfileId: UUID?,
     val symbol: String,
     val assetType: AssetType,
     val timeframe: String,
@@ -63,6 +64,7 @@ data class BacktestResponse(
     companion object {
         fun from(run: BacktestRun) = BacktestResponse(
             id = run.id,
+            accountProfileId = run.accountProfileId,
             symbol = run.symbol,
             assetType = run.assetType,
             timeframe = run.timeframe,

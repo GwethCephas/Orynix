@@ -17,6 +17,9 @@ import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import com.cephCoding.orynix.common.exception.NewsArticleNotFoundException
 import com.cephCoding.orynix.common.exception.NewsDataProviderException
 import com.cephCoding.orynix.common.exception.SentimentAnalyzerException
+import com.cephCoding.orynix.common.exception.InvalidRiskCalculationException
+import com.cephCoding.orynix.common.exception.InvalidTradingAccountProfileException
+import com.cephCoding.orynix.common.exception.TradingAccountProfileNotFoundException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -104,6 +107,18 @@ class GlobalExceptionHandler {
     @ExceptionHandler(BacktestNotFoundException::class)
     fun handleBacktestNotFound(ex: BacktestNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.NOT_FOUND, ex.message ?: "Backtest not found", request)
+
+    @ExceptionHandler(InvalidTradingAccountProfileException::class)
+    fun handleInvalidTradingAccountProfile(ex: InvalidTradingAccountProfileException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(TradingAccountProfileNotFoundException::class)
+    fun handleTradingAccountProfileNotFound(ex: TradingAccountProfileNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "Trading account profile not found", request)
+
+    @ExceptionHandler(InvalidRiskCalculationException::class)
+    fun handleInvalidRiskCalculation(ex: InvalidRiskCalculationException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {

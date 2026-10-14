@@ -12,4 +12,17 @@ data class Instrument(
     val providerSymbol: String,
     val baseCurrency: String? = null,
     val quoteCurrency: String? = null,
-)
+) {
+    /**
+     * The one account currency this instrument can be traded/backtested/risk-sized against: USD for
+     * a stock (Orynix models no per-stock trading currency), or the pair's own quote currency for
+     * forex (price movement is quote-currency-denominated). Additive — `BacktestService.validateAccountCurrency`
+     * predates this and is left untouched; this property exists for new callers (trading account
+     * profiles, the risk calculator) that need the same rule without duplicating it.
+     */
+    val requiredAccountCurrency: String
+        get() = when (assetType) {
+            AssetType.STOCK -> "USD"
+            AssetType.FOREX -> quoteCurrency ?: error("FOREX instrument missing quoteCurrency: $displaySymbol")
+        }
+}

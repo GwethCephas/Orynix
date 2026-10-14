@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { path: "news", label: "News & Sentiment" },
   { path: "company", label: "Company Info" },
   { path: "backtests", label: "Backtesting" },
+  { path: "trading-accounts", label: "Trading Accounts" },
 ];
 
 export function renderShell(root) {

@@ -9,6 +9,7 @@ import * as signalsPage from "./pages/signals.js";
 import * as newsPage from "./pages/news.js";
 import * as companyPage from "./pages/company.js";
 import * as backtestsPage from "./pages/backtests.js";
+import * as tradingAccountsPage from "./pages/tradingAccounts.js";
 
 const root = document.getElementById("app-root");
 const pageRoot = renderShell(root);
@@ -20,6 +21,7 @@ registerRoute("signals", signalsPage);
 registerRoute("news", newsPage);
 registerRoute("company", companyPage);
 registerRoute("backtests", backtestsPage);
+registerRoute("trading-accounts", tradingAccountsPage);
 setDefaultRoute("overview");
 
 async function restoreSession() {

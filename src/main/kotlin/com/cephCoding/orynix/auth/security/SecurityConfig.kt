@@ -29,7 +29,10 @@ class SecurityConfig(
     fun corsConfigurationSource(): CorsConfigurationSource {
         val config = CorsConfiguration().apply {
             allowedOriginPatterns = listOf("http://localhost:*", "http://127.0.0.1:*")
-            allowedMethods = listOf("GET", "POST")
+            // PUT/DELETE added for the trading-account-profile module (tradingaccount/) - the
+            // first endpoints in this app to use either verb; GET/POST alone was sufficient for
+            // every feature before it.
+            allowedMethods = listOf("GET", "POST", "PUT", "DELETE")
             allowedHeaders = listOf("Authorization", "Content-Type")
         }
         return UrlBasedCorsConfigurationSource().apply {

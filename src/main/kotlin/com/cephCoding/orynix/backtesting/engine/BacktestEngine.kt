@@ -342,9 +342,9 @@ object BacktestEngine {
      * product), so the degenerate-ATR/multiplier guard can run before any fill price is known.
      * Commission/slippage are deliberately NOT netted out of the risk budget (CLAUDE.md Section 18)
      * - the budget covers price risk only, so a realized stop-loss will run slightly larger than the
-     * nominal riskPercent. FLOOR, never HALF_UP, is the one deliberate departure from this engine's
-     * otherwise-universal rounding - rounding up here would let realized price-risk exceed the
-     * declared budget.
+     * nominal riskPercent. The actual budget/FLOOR/degenerate-guard arithmetic lives in RiskSizing,
+     * shared with the standalone risk calculator (riskcalculator/) - this function only computes the
+     * ATR-specific riskPerUnit and delegates.
      */
     private fun computeRiskBasedQuantity(
         cash: BigDecimal,
@@ -353,10 +353,7 @@ object BacktestEngine {
         initialStopMultiplier: BigDecimal,
     ): BigDecimal? {
         val riskPerUnit = initialStopMultiplier.multiply(atrAtSignal)
-        if (riskPerUnit.signum() <= 0) return null
-        val riskBudget = cash.multiply(riskPercent).divide(HUNDRED, INTERNAL_SCALE, RoundingMode.HALF_UP)
-        val quantity = riskBudget.divide(riskPerUnit, INTERNAL_SCALE, RoundingMode.FLOOR)
-        return if (quantity.signum() <= 0) null else quantity
+        return RiskSizing.computeQuantity(cash, riskPercent, riskPerUnit)
     }
 
     private fun buildTrade(
