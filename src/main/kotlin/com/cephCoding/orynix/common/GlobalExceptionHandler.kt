@@ -21,6 +21,9 @@ import com.cephCoding.orynix.common.exception.InvalidRiskCalculationException
 import com.cephCoding.orynix.common.exception.InvalidTradingAccountProfileException
 import com.cephCoding.orynix.common.exception.MarketAnalysisProviderException
 import com.cephCoding.orynix.common.exception.MarketAnalysisResponseException
+import com.cephCoding.orynix.common.exception.InvalidTradeSetupException
+import com.cephCoding.orynix.common.exception.InvalidTradeSetupTransitionException
+import com.cephCoding.orynix.common.exception.TradeSetupNotFoundException
 import com.cephCoding.orynix.common.exception.TradingAccountProfileNotFoundException
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
@@ -125,6 +128,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(MarketAnalysisProviderException::class, MarketAnalysisResponseException::class)
     fun handleMarketAnalysisFailure(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_GATEWAY, ex.message ?: "Market analysis provider request failed", request)
+
+    @ExceptionHandler(InvalidTradeSetupException::class, InvalidTradeSetupTransitionException::class)
+    fun handleTradeSetupValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(TradeSetupNotFoundException::class)
+    fun handleTradeSetupNotFound(ex: TradeSetupNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "Trade setup not found", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {
