@@ -31,6 +31,10 @@ gemini:
   model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
   timeout-ms: ${GEMINI_TIMEOUT_MS:20000}
 
+paper-trading:
+  max-price-staleness-days: ${PAPER_TRADING_MAX_PRICE_STALENESS_DAYS:4}
+  short-collateral-multiplier: ${PAPER_TRADING_SHORT_COLLATERAL_MULTIPLIER:1.5}
+
 management:
   endpoints:
     web:

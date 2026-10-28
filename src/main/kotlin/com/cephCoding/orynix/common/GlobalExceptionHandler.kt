@@ -17,6 +17,13 @@ import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import com.cephCoding.orynix.common.exception.NewsArticleNotFoundException
 import com.cephCoding.orynix.common.exception.NewsDataProviderException
 import com.cephCoding.orynix.common.exception.SentimentAnalyzerException
+import com.cephCoding.orynix.common.exception.InsufficientBuyingPowerException
+import com.cephCoding.orynix.common.exception.InvalidPaperOrderException
+import com.cephCoding.orynix.common.exception.InvalidPaperPositionTransitionException
+import com.cephCoding.orynix.common.exception.PaperPositionNotFoundException
+import com.cephCoding.orynix.common.exception.PaperTradingAccountNotFoundException
+import com.cephCoding.orynix.common.exception.PaperTradingPriceUnavailableException
+import com.cephCoding.orynix.common.exception.StalePaperTradingPriceException
 import com.cephCoding.orynix.common.exception.InvalidRiskCalculationException
 import com.cephCoding.orynix.common.exception.InvalidTradingAccountProfileException
 import com.cephCoding.orynix.common.exception.MarketAnalysisProviderException
@@ -136,6 +143,18 @@ class GlobalExceptionHandler {
     @ExceptionHandler(TradeSetupNotFoundException::class)
     fun handleTradeSetupNotFound(ex: TradeSetupNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.NOT_FOUND, ex.message ?: "Trade setup not found", request)
+
+    @ExceptionHandler(InvalidPaperOrderException::class, InvalidPaperPositionTransitionException::class, InsufficientBuyingPowerException::class)
+    fun handlePaperTradingValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
+
+    @ExceptionHandler(StalePaperTradingPriceException::class, PaperTradingPriceUnavailableException::class)
+    fun handlePaperTradingPriceUnavailable(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.UNPROCESSABLE_ENTITY, ex.message ?: "No acceptable price is available", request)
+
+    @ExceptionHandler(PaperTradingAccountNotFoundException::class, PaperPositionNotFoundException::class)
+    fun handlePaperTradingNotFound(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
+        respond(HttpStatus.NOT_FOUND, ex.message ?: "Not found", request)
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ErrorResponse> {
