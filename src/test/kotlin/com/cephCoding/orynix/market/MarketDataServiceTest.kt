@@ -1,14 +1,17 @@
 package com.cephCoding.orynix.market
 
+import com.cephCoding.orynix.common.exception.InvalidTimeframeRangeException
 import com.cephCoding.orynix.market.domain.Candle
 import com.cephCoding.orynix.market.domain.CandleTimeframe
 import com.cephCoding.orynix.market.repository.MarketDataCandleRepository
 import com.cephCoding.orynix.market.service.MarketDataService
 import com.cephCoding.orynix.support.AbstractIntegrationTest
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
 import java.time.Instant
+import java.time.LocalDate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -114,5 +117,61 @@ class MarketDataServiceTest : AbstractIntegrationTest() {
 
         val persisted = repository.findBySymbolAndTimeframeAndTimestampIn("EUR/USD", "1d", listOf(candle.timestamp))
         assert(persisted.size == 1)
+    }
+
+    @Test
+    fun `getDailyCandles rejects an intraday timeframe rather than fetching an unbounded intraday window`() {
+        assertThrows(InvalidTimeframeRangeException::class.java) {
+            marketDataService.getDailyCandles("INTRADAY", "15m")
+        }
+    }
+
+    @Test
+    fun `getCandlesInRange accepts an intraday timeframe within its per-interval cap`() {
+        val candle = Candle(
+            symbol = "INTRADAYB",
+            timeframe = CandleTimeframe.MINUTE_15,
+            timestamp = Instant.parse("2026-01-01T09:30:00Z"),
+            open = BigDecimal("100.00"),
+            high = BigDecimal("101.00"),
+            low = BigDecimal("99.00"),
+            close = BigDecimal("100.50"),
+            volume = BigDecimal("1000"),
+        )
+        fakeMarketDataProvider.candlesToReturn = listOf(candle)
+
+        val result = marketDataService.getCandlesInRange(
+            "intradayb", "15m", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 5)
+        )
+
+        assert(result.size == 1)
+    }
+
+    @Test
+    fun `getCandlesInRange rejects a 15-minute request spanning more than one week`() {
+        assertThrows(InvalidTimeframeRangeException::class.java) {
+            marketDataService.getCandlesInRange(
+                "INTRADAYC", "15m", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31)
+            )
+        }
+    }
+
+    @Test
+    fun `getCandlesInRange rejects a 1-hour request spanning more than one month`() {
+        assertThrows(InvalidTimeframeRangeException::class.java) {
+            marketDataService.getCandlesInRange(
+                "INTRADAYD", "1h", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 1)
+            )
+        }
+    }
+
+    @Test
+    fun `getCandlesInRange places no intraday cap on a daily request`() {
+        fakeMarketDataProvider.candlesToReturn = emptyList()
+
+        // Would exceed any of the intraday caps (15m-7d, 1h-31d) many times over - must not throw.
+        marketDataService.getCandlesInRange(
+            "INTRADAYE", "1d", LocalDate.of(2020, 1, 1), LocalDate.of(2026, 1, 1)
+        )
     }
 }

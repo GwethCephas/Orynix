@@ -3,7 +3,16 @@ import { getCurrentSymbol, withCache, invalidateCached } from "../state.js";
 import { createSectionState, loadInto, renderStateBlock } from "../components/stateBlock.js";
 import { renderContextSection } from "../components/contextSection.js";
 import { deriveAssetHeader, formatPrice, isForexSymbol, formatNumber, formatPercent, formatDate, formatDateTime, escapeHtml } from "../format.js";
-import { initChart, setChartCandles, setChartRange, RANGE_OPTIONS } from "../chart.js";
+import {
+  initChart,
+  setChartCandles,
+  setChartRange,
+  setChartInterval,
+  RANGE_OPTIONS,
+  INTERVAL_OPTIONS,
+  DEFAULT_INTERVAL_CODE,
+  isPeriodCompatibleWithInterval,
+} from "../chart.js";
 
 const TA_GROUPS = [
   {
@@ -43,6 +52,18 @@ const TA_GROUPS = [
 
 const CANDLES_ENDPOINT = "candles";
 const MARKET_INTELLIGENCE_ENDPOINT = "market-intelligence";
+const DEFAULT_PERIOD_DAYS = 90;
+
+// UTC calendar boundaries, deliberately — mirrors BacktestService's own
+// fromDate.atStartOfDay(ZoneOffset.UTC) convention (CLAUDE.md Section 18) so a period selection
+// means the same calendar window regardless of the browser's local timezone, and matches what
+// the backend's range validation actually checks against.
+function utcDateRange(periodDays) {
+  const to = new Date();
+  const from = new Date(to.getTime() - periodDays * 24 * 60 * 60 * 1000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { from: iso(from), to: iso(to) };
+}
 
 export function mount(container) {
   const symbol = getCurrentSymbol();
@@ -55,6 +76,15 @@ export function mount(container) {
   let alive = true;
   const candlesSection = { value: createSectionState() };
   const contextSection = { value: createSectionState() };
+  // Period/interval selection is local to this mounted page, like the range buttons already
+  // were — it resets on remount, matching the pre-existing "always starts at 3M" behavior rather
+  // than persisting across navigation the way paperTrading.js's selected account deliberately does.
+  let currentInterval = DEFAULT_INTERVAL_CODE;
+  let currentPeriodDays = DEFAULT_PERIOD_DAYS;
+  // Guards against an out-of-order response: switching interval/period rapidly can start a
+  // second fetch before the first resolves, and network ordering gives no guarantee the first
+  // one won't resolve last. Only the response whose sequence number is still current is applied.
+  let candlesRequestSeq = 0;
 
   container.innerHTML = `
     <div class="page analysis-page">
@@ -62,7 +92,16 @@ export function mount(container) {
 
       <section class="card chart-card">
         <div class="chart-card-header">
-          <div class="chart-range-controls" id="rangeControls"></div>
+          <div class="chart-control-stack">
+            <div class="chart-control-group">
+              <span class="chart-control-label">Period</span>
+              <div class="chart-range-controls" id="rangeControls"></div>
+            </div>
+            <div class="chart-control-group">
+              <span class="chart-control-label">Interval</span>
+              <div class="chart-interval-controls" id="intervalControls"></div>
+            </div>
+          </div>
           <button type="button" class="refresh-btn" id="refreshBtn">Refresh</button>
         </div>
         <div class="chart-wrapper">
@@ -77,6 +116,9 @@ export function mount(container) {
           <h2>Technical Analysis</h2>
           <span class="section-asof" id="taAsOf"></span>
         </div>
+        <p class="section-disclosure">Technical analysis, signals, and the AI market analysis agent always evaluate
+          daily candles, regardless of the chart's selected interval above — this does not change with intraday
+          chart views.</p>
         <div id="technicalAnalysis"></div>
       </section>
     </div>`;
@@ -88,20 +130,69 @@ export function mount(container) {
   const taEl = container.querySelector("#technicalAnalysis");
   const taAsOfEl = container.querySelector("#taAsOf");
   const rangeControlsEl = container.querySelector("#rangeControls");
+  const intervalControlsEl = container.querySelector("#intervalControls");
   const refreshBtn = container.querySelector("#refreshBtn");
 
   initChart(canvas, tooltipEl);
 
-  rangeControlsEl.innerHTML = RANGE_OPTIONS.map(
-    (opt) => `<button type="button" class="range-btn ${opt.days === 90 ? "active" : ""}" data-days="${opt.days ?? ""}">${opt.label}</button>`
-  ).join("");
-  rangeControlsEl.querySelectorAll(".range-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      rangeControlsEl.querySelectorAll(".range-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      setChartRange(btn.dataset.days ? Number(btn.dataset.days) : null);
+  function renderRangeButtons() {
+    rangeControlsEl.innerHTML = RANGE_OPTIONS.map((opt) => {
+      const compatible = isPeriodCompatibleWithInterval(opt.days, currentInterval);
+      const active = opt.days === currentPeriodDays;
+      return `<button type="button" class="range-btn ${active ? "active" : ""}" data-days="${opt.days ?? ""}" ${compatible ? "" : "disabled"}>${opt.label}</button>`;
+    }).join("");
+    rangeControlsEl.querySelectorAll(".range-btn:not(:disabled)").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        currentPeriodDays = btn.dataset.days ? Number(btn.dataset.days) : null;
+        renderRangeButtons();
+        if (currentInterval === DEFAULT_INTERVAL_CODE) {
+          // Pure client-side slice over the already-fetched daily series — no network request,
+          // preserving the exact behavior this page has always had for the daily interval.
+          setChartRange(currentPeriodDays);
+        } else {
+          loadCandles(false);
+        }
+      });
     });
-  });
+  }
+
+  function renderIntervalButtons() {
+    intervalControlsEl.innerHTML = INTERVAL_OPTIONS.map(
+      (opt) => `<button type="button" class="range-btn ${opt.code === currentInterval ? "active" : ""}" data-interval="${opt.code}">${opt.label}</button>`
+    ).join("");
+    intervalControlsEl.querySelectorAll(".range-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const interval = btn.dataset.interval;
+        if (interval === currentInterval) return;
+        currentInterval = interval;
+        if (!isPeriodCompatibleWithInterval(currentPeriodDays, currentInterval)) {
+          // The previously-selected period doesn't apply to this interval (e.g. "All" with
+          // "15m") — fall back to the first compatible period in RANGE_OPTIONS' own order
+          // (shortest first) rather than leaving an incompatible combination selected.
+          const fallback = RANGE_OPTIONS.find((opt) => isPeriodCompatibleWithInterval(opt.days, currentInterval));
+          currentPeriodDays = fallback ? fallback.days : currentPeriodDays;
+        }
+        renderIntervalButtons();
+        renderRangeButtons();
+        loadCandles(false);
+      });
+    });
+  }
+
+  renderRangeButtons();
+  renderIntervalButtons();
+
+  // Labels the chart's own data-freshness line using whichever bar the chart is actually
+  // showing — never claims real-time; Massive itself tags every aggregates response (daily and
+  // intraday alike) "status":"DELAYED" (verified live, 2026-10-29), so "historical, not
+  // real-time" holds unconditionally regardless of interval.
+  function freshnessLabel(timestamp) {
+    if (currentInterval === DEFAULT_INTERVAL_CODE) {
+      return `Daily close as of ${formatDate(timestamp)}`;
+    }
+    const intervalLabel = INTERVAL_OPTIONS.find((opt) => opt.code === currentInterval)?.label ?? currentInterval;
+    return `${intervalLabel} candle as of ${formatDateTime(timestamp)}`;
+  }
 
   function renderHeader() {
     renderStateBlock(assetHeaderEl, candlesSection.value, {
@@ -119,7 +210,7 @@ export function mount(container) {
           <div class="asset-symbol">${escapeHtml(symbol)}</div>
           <div class="asset-price">${formatPrice(header.latestClose, symbol)}</div>
           <div class="asset-change ${changeClass}">${changeText}</div>
-          <div class="asset-asof">Daily close as of ${formatDate(header.timestamp)} &middot; historical data, not real-time</div>`;
+          <div class="asset-asof">${freshnessLabel(header.timestamp)} &middot; historical data, not real-time</div>`;
       },
     });
   }
@@ -130,6 +221,7 @@ export function mount(container) {
       onRetry: () => loadCandles(true),
       renderContent: (candles, el) => {
         el.innerHTML = "";
+        setChartInterval(currentInterval);
         setChartCandles(candles, (value) => formatPrice(value, symbol));
       },
     });
@@ -169,9 +261,38 @@ export function mount(container) {
     renderTa();
   }
 
+  // The daily interval keeps the original single shared cache entry, since every period button
+  // under it slices client-side over the same one 365-day fetch (CLAUDE.md's chart.js note).
+  // Every intraday interval gets its own cache entry per period+interval combo, since each one
+  // is a genuinely different, independently-scoped backend request.
+  function candlesCacheKey(interval, periodDays) {
+    return interval === DEFAULT_INTERVAL_CODE ? CANDLES_ENDPOINT : `${CANDLES_ENDPOINT}:${interval}:${periodDays}`;
+  }
+
+  function fetchCandlesForCombo(interval, periodDays) {
+    if (interval === DEFAULT_INTERVAL_CODE) return getCandles(symbol);
+    const { from, to } = utcDateRange(periodDays);
+    return getCandles(symbol, { timeframe: interval, from, to });
+  }
+
   async function loadCandles(force) {
-    if (force) invalidateCached(symbol, CANDLES_ENDPOINT);
-    await loadInto(candlesSection, renderAll, () => withCache(symbol, CANDLES_ENDPOINT, () => getCandles(symbol)));
+    const interval = currentInterval;
+    const periodDays = currentPeriodDays;
+    const cacheKey = candlesCacheKey(interval, periodDays);
+    if (force) invalidateCached(symbol, cacheKey);
+
+    const mySeq = ++candlesRequestSeq;
+    candlesSection.value = { status: "loading", data: null, error: null };
+    renderAll();
+    try {
+      const data = await withCache(symbol, cacheKey, () => fetchCandlesForCombo(interval, periodDays));
+      if (mySeq !== candlesRequestSeq) return; // superseded by a newer interval/period selection
+      candlesSection.value = { status: "ok", data, error: null };
+    } catch (error) {
+      if (mySeq !== candlesRequestSeq) return;
+      candlesSection.value = { status: "error", data: null, error };
+    }
+    renderAll();
   }
 
   async function loadContext(force) {

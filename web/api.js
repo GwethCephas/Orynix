@@ -116,8 +116,15 @@ export function getMe() {
   return apiRequest("/api/v1/users/me", { useAuth: true });
 }
 
-export function getCandles(symbol) {
-  return apiRequest(`/api/v1/market-data/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d`, {
+// {timeframe, from, to} is optional and additive — omitting it preserves the original call shape
+// exactly (timeframe=1d, no from/to), the backward-compatible default the backend's own
+// /market-data/candles endpoint still honors. from/to are "YYYY-MM-DD" strings (UTC calendar
+// dates) — only supplying both routes the backend to its range-validated, intraday-capable path.
+export function getCandles(symbol, { timeframe = "1d", from, to } = {}) {
+  const params = new URLSearchParams({ symbol, timeframe });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  return apiRequest(`/api/v1/market-data/candles?${params.toString()}`, {
     useAuth: true,
   });
 }

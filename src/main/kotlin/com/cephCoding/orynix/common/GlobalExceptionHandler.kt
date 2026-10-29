@@ -12,6 +12,7 @@ import com.cephCoding.orynix.common.exception.InsufficientCandleDataException
 import com.cephCoding.orynix.common.exception.InvalidStrategyParametersException
 import com.cephCoding.orynix.common.exception.InvalidSymbolException
 import com.cephCoding.orynix.common.exception.InvalidTimeframeException
+import com.cephCoding.orynix.common.exception.InvalidTimeframeRangeException
 import com.cephCoding.orynix.common.exception.InvalidNewsLimitException
 import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import com.cephCoding.orynix.common.exception.NewsArticleNotFoundException
@@ -82,7 +83,7 @@ class GlobalExceptionHandler {
     fun handleCompanyNotFound(ex: CompanyNotFoundException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.NOT_FOUND, ex.message ?: "Company not found", request)
 
-    @ExceptionHandler(InvalidSymbolException::class, InvalidTimeframeException::class)
+    @ExceptionHandler(InvalidSymbolException::class, InvalidTimeframeException::class, InvalidTimeframeRangeException::class)
     fun handleMarketDataValidation(ex: RuntimeException, request: HttpServletRequest): ResponseEntity<ErrorResponse> =
         respond(HttpStatus.BAD_REQUEST, ex.message ?: "Invalid request", request)
 

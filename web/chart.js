@@ -9,6 +9,8 @@ const AXIS_PADDING_TOP = 16;
 const AXIS_PADDING_BOTTOM = 24;
 
 export const RANGE_OPTIONS = [
+  { label: "1D", days: 1 },
+  { label: "1W", days: 7 },
   { label: "1M", days: 30 },
   { label: "3M", days: 90 },
   { label: "6M", days: 180 },
@@ -16,11 +18,55 @@ export const RANGE_OPTIONS = [
   { label: "All", days: null },
 ];
 
+const DAILY_INTERVAL_CODE = "1d";
+
+// Backend candle codes (market/domain/CandleTimeframe.kt) that MassiveMarketDataProvider can
+// genuinely fetch and correctly label — live-verified against the real Massive API, not assumed.
+export const INTERVAL_OPTIONS = [
+  { label: "15m", code: "15m" },
+  { label: "30m", code: "30m" },
+  { label: "1h", code: "1h" },
+  { label: "4h", code: "4h" },
+  { label: "1D", code: DAILY_INTERVAL_CODE },
+];
+
+export const DEFAULT_INTERVAL_CODE = DAILY_INTERVAL_CODE;
+
+// Per-interval maximum period, in days, that an intraday fetch may span in one request. Mirrors
+// MarketDataService.MAX_INTRADAY_RANGE_DAYS_BY_TIMEFRAME on the backend (the authority — this is
+// a duplicated, documented copy, not a second source of truth) — live-verified 2026-10-29: a
+// 31-day/15-minute request already needed multiple Massive pages, and forex trades 24/5 so even a
+// 1-week/15-minute window can approach a single page's real bar count. Keep both copies in sync if
+// either changes; chart.js only needs this to disable incompatible period buttons before a
+// request is even made — the backend's own validateIntradayRange is the actual enforcement.
+const MAX_INTRADAY_PERIOD_DAYS = {
+  "15m": 7,
+  "30m": 7,
+  "1h": 31,
+  "4h": 31,
+};
+
+// A period is compatible with an interval when the resulting request is both fetchable (within
+// the provider's real per-interval range cap) and meaningful to chart. "1D" period + "1D" interval
+// is deliberately excluded here even though nothing would reject it server-side: it resolves to
+// exactly one daily candle, and render() already refuses to draw fewer than two — a dead end, not
+// a usable chart. "All" (days: null) is never intraday-compatible: an unbounded window has no cap
+// to check against.
+export function isPeriodCompatibleWithInterval(periodDays, intervalCode) {
+  if (intervalCode === DAILY_INTERVAL_CODE) {
+    return periodDays !== 1;
+  }
+  if (periodDays === null) return false;
+  const maxDays = MAX_INTRADAY_PERIOD_DAYS[intervalCode];
+  return maxDays !== undefined && periodDays <= maxDays;
+}
+
 const chartState = {
   canvas: null,
   tooltipEl: null,
   allCandles: [],
   rangeDays: 90,
+  intervalCode: DAILY_INTERVAL_CODE,
   resizeObserver: null,
   themeListener: null,
   mouseMoveHandler: null,
@@ -52,6 +98,13 @@ function resizeCanvasToDisplaySize(canvas) {
 
 function visibleCandles() {
   if (!chartState.allCandles.length) return [];
+  // The daily interval is the only case where the chart holds one large, already-fully-fetched
+  // series and slices it client-side per period selection (no network request on period change —
+  // see analysis.js). Every intraday interval instead fetches exactly the selected period's date
+  // range from the backend already (CLAUDE.md's timeframe extension) — chartState.allCandles IS
+  // the visible range already; slicing it again by a day-count here would slice by BAR COUNT
+  // instead, which is not the same unit and would silently cut real data off the chart.
+  if (chartState.intervalCode !== DAILY_INTERVAL_CODE) return chartState.allCandles;
   if (!chartState.rangeDays) return chartState.allCandles;
   return chartState.allCandles.slice(-chartState.rangeDays);
 }
@@ -334,6 +387,7 @@ export function initChart(canvas, tooltipEl) {
   // ResizeObserver/theme-change listeners below can trigger a render() before then.
   chartState.allCandles = [];
   chartState.priceFormatter = formatCurrency;
+  chartState.intervalCode = DAILY_INTERVAL_CODE;
 
   chartState.resizeObserver = new ResizeObserver(() => render());
   chartState.resizeObserver.observe(canvas.parentElement || canvas);
@@ -368,4 +422,11 @@ export function setChartRange(days) {
 
 export function getChartRangeDays() {
   return chartState.rangeDays;
+}
+
+// Must be called alongside setChartCandles whenever the interval selection changes, so
+// visibleCandles() knows whether the daily client-side slice still applies (see above). Does not
+// itself re-render — setChartCandles (which always follows an interval change in analysis.js) does.
+export function setChartInterval(intervalCode) {
+  chartState.intervalCode = intervalCode;
 }

@@ -2,6 +2,7 @@ package com.cephCoding.orynix.support
 
 import com.cephCoding.orynix.common.exception.MarketDataProviderException
 import com.cephCoding.orynix.market.domain.Candle
+import com.cephCoding.orynix.market.domain.CandleTimeframe
 import com.cephCoding.orynix.market.provider.MarketDataProvider
 import java.time.LocalDate
 
@@ -15,7 +16,7 @@ class FakeMarketDataProvider : MarketDataProvider {
     // and a short leg) different prices within the same test (CLAUDE.md Section 22).
     var candlesBySymbol: MutableMap<String, List<Candle>> = mutableMapOf()
 
-    override fun fetchDailyCandles(symbol: String, from: LocalDate, to: LocalDate): List<Candle> {
+    override fun fetchCandles(symbol: String, from: LocalDate, to: LocalDate, timeframe: CandleTimeframe): List<Candle> {
         failure?.let { throw it }
         return candlesBySymbol[symbol] ?: candlesToReturn
     }
