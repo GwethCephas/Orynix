@@ -175,3 +175,58 @@ export function calculateRisk(request) {
 export function getAiMarketAnalysis(request) {
   return apiRequest("/api/v1/market-analyses", { method: "POST", body: request, useAuth: true });
 }
+
+export function createPaperTradingAccount(request) {
+  return apiRequest("/api/v1/paper-trading/accounts", { method: "POST", body: request, useAuth: true });
+}
+
+export function listPaperTradingAccounts() {
+  return apiRequest("/api/v1/paper-trading/accounts", { useAuth: true });
+}
+
+export function getPaperTradingAccount(accountId) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}`, { useAuth: true });
+}
+
+export function updatePaperTradingAccount(accountId, request) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}`, { method: "PUT", body: request, useAuth: true });
+}
+
+export function archivePaperTradingAccount(accountId) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE", useAuth: true });
+}
+
+export function getPaperTradingAccountSummary(accountId) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/summary`, { useAuth: true });
+}
+
+export function refreshPaperTradingAccountSummary(accountId) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/refresh`, { method: "POST", useAuth: true });
+}
+
+export function submitPaperOrder(accountId, request) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/orders`, { method: "POST", body: request, useAuth: true });
+}
+
+export function listPaperOrders(accountId, page = 0, size = 20) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/orders?page=${page}&size=${size}`, { useAuth: true });
+}
+
+export function listOpenPaperPositions(accountId) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/positions`, { useAuth: true });
+}
+
+export function listClosedPaperPositions(accountId, page = 0, size = 20) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/positions/closed?page=${page}&size=${size}`, { useAuth: true });
+}
+
+export function closePaperPosition(accountId, positionId, request) {
+  return apiRequest(
+    `/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/positions/${encodeURIComponent(positionId)}/close`,
+    { method: "POST", body: request, useAuth: true }
+  );
+}
+
+export function listPaperLedgerEntries(accountId, page = 0, size = 20) {
+  return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/ledger?page=${page}&size=${size}`, { useAuth: true });
+}

@@ -1,52 +1,117 @@
-/* ---------- Theme tokens (dark-first) ---------- */
+/* ---------- Theme tokens ----------
+   Dark is the base :root block (this app's original default). Light applies either from the OS
+   preference (when the user has never touched the toggle - :root:not([data-theme]) keeps that
+   path alive) or from an explicit [data-theme] override, which always wins regardless of the OS
+   setting. index.html sets [data-theme] synchronously before first paint to avoid a flash. */
 :root {
-  --bg: #0d0f12;
-  --bg-elevated: #121519;
-  --fg: #e7e9ec;
-  --muted: #8b93a1;
-  --card-bg: #15181d;
-  --card-bg-hover: #1a1e24;
-  --border: #262b33;
-  --border-strong: #343b46;
-  --accent: #5b9dff;
+  --bg: #101318;
+  --bg-elevated: #191e26;
+  --fg: #f2f4f8;
+  --muted: #a0a8b8;
+  --card-bg: #191e26;
+  --card-bg-hover: #222936;
+  --border: #2b3340;
+  --border-strong: #3a4354;
+  --accent: #648cff;
   --accent-fg: #0b1420;
-  --positive: #3fd47c;
-  --negative: #f0564f;
-  --neutral: #8b93a1;
-  --positive-bg: rgba(63, 212, 124, 0.12);
-  --negative-bg: rgba(240, 86, 79, 0.12);
-  --neutral-bg: rgba(139, 147, 161, 0.12);
-  --chart-line: #5b9dff;
-  --chart-fill: rgba(91, 157, 255, 0.12);
-  --chart-grid: #1f232a;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --radius: 6px;
-  --sidebar-width: 220px;
+  --accent-ring: rgba(100, 140, 255, 0.3);
+  --positive: #36c995;
+  --negative: #f16d79;
+  --neutral: #a0a8b8;
+  --positive-bg: rgba(54, 201, 149, 0.14);
+  --negative-bg: rgba(241, 109, 121, 0.14);
+  --neutral-bg: rgba(160, 168, 184, 0.12);
+  --chart-line: #648cff;
+  --chart-fill: rgba(100, 140, 255, 0.12);
+  --chart-grid: #222936;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+  --sidebar-width: 224px;
+  --sidebar-width-collapsed: 72px;
+  --transition-fast: 120ms;
+  --transition-base: 180ms;
+  --transition-slow: 240ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f4f5f7;
+  :root:not([data-theme]) {
+    --bg: #f4f6fa;
     --bg-elevated: #ffffff;
-    --fg: #1a1d23;
-    --muted: #5b6270;
+    --fg: #1b2230;
+    --muted: #687386;
     --card-bg: #ffffff;
-    --card-bg-hover: #f8f9fb;
-    --border: #e0e3e8;
-    --border-strong: #cbd0d8;
-    --accent: #2f6fed;
+    --card-bg-hover: #ebeff6;
+    --border: #e1e6ef;
+    --border-strong: #c7cedc;
+    --accent: #4169e1;
     --accent-fg: #ffffff;
-    --positive: #1a7f37;
-    --negative: #c42b2b;
-    --neutral: #5b6270;
-    --positive-bg: rgba(26, 127, 55, 0.08);
-    --negative-bg: rgba(196, 43, 43, 0.08);
-    --neutral-bg: rgba(91, 98, 112, 0.08);
-    --chart-line: #2f6fed;
-    --chart-fill: rgba(47, 111, 237, 0.1);
-    --chart-grid: #e3e6ea;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    --accent-ring: rgba(65, 105, 225, 0.22);
+    --positive: #128567;
+    --negative: #d9485f;
+    --neutral: #687386;
+    --positive-bg: rgba(18, 133, 103, 0.1);
+    --negative-bg: rgba(217, 72, 95, 0.1);
+    --neutral-bg: rgba(104, 115, 134, 0.08);
+    --chart-line: #4169e1;
+    --chart-fill: rgba(65, 105, 225, 0.1);
+    --chart-grid: #ebeff6;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-elevated: 0 8px 24px rgba(16, 24, 40, 0.12);
   }
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f6fa;
+  --bg-elevated: #ffffff;
+  --fg: #1b2230;
+  --muted: #687386;
+  --card-bg: #ffffff;
+  --card-bg-hover: #ebeff6;
+  --border: #e1e6ef;
+  --border-strong: #c7cedc;
+  --accent: #4169e1;
+  --accent-fg: #ffffff;
+  --accent-ring: rgba(65, 105, 225, 0.22);
+  --positive: #128567;
+  --negative: #d9485f;
+  --neutral: #687386;
+  --positive-bg: rgba(18, 133, 103, 0.1);
+  --negative-bg: rgba(217, 72, 95, 0.1);
+  --neutral-bg: rgba(104, 115, 134, 0.08);
+  --chart-line: #4169e1;
+  --chart-fill: rgba(65, 105, 225, 0.1);
+  --chart-grid: #ebeff6;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-elevated: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+:root[data-theme="dark"] {
+  --bg: #101318;
+  --bg-elevated: #191e26;
+  --fg: #f2f4f8;
+  --muted: #a0a8b8;
+  --card-bg: #191e26;
+  --card-bg-hover: #222936;
+  --border: #2b3340;
+  --border-strong: #3a4354;
+  --accent: #648cff;
+  --accent-fg: #0b1420;
+  --accent-ring: rgba(100, 140, 255, 0.3);
+  --positive: #36c995;
+  --negative: #f16d79;
+  --neutral: #a0a8b8;
+  --positive-bg: rgba(54, 201, 149, 0.14);
+  --negative-bg: rgba(241, 109, 121, 0.14);
+  --neutral-bg: rgba(160, 168, 184, 0.12);
+  --chart-line: #648cff;
+  --chart-fill: rgba(100, 140, 255, 0.12);
+  --chart-grid: #222936;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 /* ---------- Reset ---------- */
@@ -60,24 +125,46 @@ html, body {
 }
 
 body {
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, "Segoe UI", "Inter", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.5;
   background: var(--bg);
   color: var(--fg);
   overflow-x: hidden;
+  transition: background-color var(--transition-base) var(--ease), color var(--transition-base) var(--ease);
 }
 
 h1, h2, h3 {
   margin: 0 0 8px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 a {
   color: inherit;
 }
 
-button, input {
+button, input, select {
   font-family: inherit;
   color: var(--fg);
+}
+
+/* Numeric values (prices, percentages, balances, table figures) line up on fixed-width digits so
+   columns of changing numbers don't visibly jitter character-width as digits update. */
+.tabular-num,
+.asset-price,
+.asset-change,
+.metric-value,
+.indicator-row span:last-child,
+.signal-value,
+.profile-metrics strong,
+.backtest-trades-table td,
+.backtest-diagnostics-grid > div strong,
+.sentiment-confidence,
+.chart-tooltip-row span:last-child,
+.stock-picker-item-symbol {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 /* ---------- App shell layout ---------- */
@@ -85,6 +172,15 @@ button, input {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   min-height: 100vh;
+  transition: grid-template-columns var(--transition-slow) var(--ease);
+}
+
+/* Keyed off a root [data-sidebar] attribute, not a class on .app-shell itself - the attribute is
+   set synchronously in index.html's inline script, before shell.js has even created .app-shell,
+   so the collapsed layout (and the rules below it) is already correct on the very first paint
+   instead of flashing expanded-then-collapsing once the JS module runs. */
+:root[data-sidebar="collapsed"] .app-shell {
+  grid-template-columns: var(--sidebar-width-collapsed) 1fr;
 }
 
 .sidebar {
@@ -94,13 +190,46 @@ button, input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 18px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   padding: 8px 10px 20px;
+  white-space: nowrap;
+}
+
+.sidebar-collapse-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-collapse-btn svg {
+  transition: transform var(--transition-base) var(--ease);
+}
+
+:root[data-sidebar="collapsed"] .sidebar-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+.sidebar-collapse-btn:hover {
+  background: var(--card-bg-hover);
+  color: var(--fg);
 }
 
 .sidebar-nav {
@@ -110,13 +239,49 @@ button, input {
 }
 
 .sidebar-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 9px 10px;
   border-radius: var(--radius);
   color: var(--muted);
   text-decoration: none;
   font-size: 14px;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  white-space: nowrap;
+  transition: background-color var(--transition-fast) var(--ease), color var(--transition-fast) var(--ease);
+}
+
+.sidebar-nav-item .nav-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-nav-item .nav-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+}
+
+.sidebar-nav-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-sidebar="collapsed"] .sidebar-nav-item-label,
+:root[data-sidebar="collapsed"] .sidebar-brand-text {
+  display: none;
+}
+
+:root[data-sidebar="collapsed"] .sidebar-nav-item {
+  justify-content: center;
+}
+
+:root[data-sidebar="collapsed"] .sidebar-brand {
+  justify-content: center;
 }
 
 .sidebar-nav-item:hover {
@@ -136,6 +301,53 @@ button, input {
 
 .mobile-nav-toggle {
   display: none;
+}
+
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  border-radius: var(--radius);
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--card-bg-hover);
+}
+
+.theme-toggle-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
+/* Sun icon = "currently dark, click to go light"; moon icon = "currently light, click to go
+   dark". Default (dark) shows the sun; both light paths (system-preference fallback and the
+   explicit override) flip to the moon. */
+.theme-toggle-btn .icon-moon {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .theme-toggle-btn .icon-sun {
+    display: none;
+  }
+  :root:not([data-theme]) .theme-toggle-btn .icon-moon {
+    display: inline-flex;
+  }
+}
+
+:root[data-theme="light"] .theme-toggle-btn .icon-sun {
+  display: none;
+}
+
+:root[data-theme="light"] .theme-toggle-btn .icon-moon {
+  display: inline-flex;
 }
 
 .app-main {
@@ -183,7 +395,7 @@ button, input {
   border-radius: var(--radius);
   padding: 6px 12px;
   font-size: 13px;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  transition: border-color var(--transition-fast) var(--ease), background-color var(--transition-fast) var(--ease);
 }
 
 .logout-btn:hover {
@@ -224,9 +436,30 @@ button, input {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
+  padding: 20px;
   box-shadow: var(--shadow);
   margin-bottom: 16px;
+  transition: background-color var(--transition-base) var(--ease), border-color var(--transition-base) var(--ease);
+}
+
+button {
+  transition: background-color var(--transition-fast) var(--ease), border-color var(--transition-fast) var(--ease),
+    color var(--transition-fast) var(--ease), opacity var(--transition-fast) var(--ease),
+    transform var(--transition-fast) var(--ease);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .page {
@@ -279,7 +512,7 @@ button {
   border-radius: var(--radius);
   padding: 6px 12px;
   font-size: 13px;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  transition: border-color var(--transition-fast) var(--ease), background-color var(--transition-fast) var(--ease);
 }
 
 .refresh-btn:hover,
@@ -313,12 +546,13 @@ button {
 
 .symbol-search-input:focus {
   outline: none;
-  border-color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .symbol-search-btn {
-  background: var(--accent, #5b9dff);
-  color: var(--accent-fg, #0b1420);
+  background: var(--accent);
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 7px 14px;
@@ -366,8 +600,8 @@ button {
 }
 
 .search-dropdown-toggle[aria-expanded="true"] {
-  border-color: var(--accent, #5b9dff);
-  color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .signal-filter-panel {
@@ -381,7 +615,7 @@ button {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   padding: 14px;
   z-index: 10;
 }
@@ -430,7 +664,8 @@ button {
 
 .signal-filter-search:focus {
   outline: none;
-  border-color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .signal-filter-list {
@@ -503,8 +738,8 @@ button {
 }
 
 .signal-filter-apply {
-  background: var(--accent, #5b9dff);
-  color: var(--accent-fg, #0b1420);
+  background: var(--accent);
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 7px 14px;
@@ -518,7 +753,7 @@ button {
 }
 
 .signal-filter-goto {
-  color: var(--accent, #5b9dff);
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
@@ -539,7 +774,7 @@ button {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elevated);
   padding: 14px;
   z-index: 10;
 }
@@ -587,8 +822,8 @@ button {
 }
 
 .stock-picker-tab.active {
-  background: var(--accent, #5b9dff);
-  border-color: var(--accent, #5b9dff);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
   font-weight: 600;
 }
@@ -612,7 +847,8 @@ button {
 
 .stock-picker-search:focus {
   outline: none;
-  border-color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .stock-picker-list {
@@ -707,7 +943,8 @@ button {
 
 .auth-field input:focus {
   outline: none;
-  border-color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .auth-actions {
@@ -718,8 +955,8 @@ button {
 
 .auth-primary-btn {
   flex: 1;
-  background: var(--accent, #5b9dff);
-  color: var(--accent-fg, #0b1420);
+  background: var(--accent);
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 10px;
@@ -770,7 +1007,7 @@ button {
 .example-chip {
   background: var(--neutral-bg);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 5px 14px;
   font-size: 13px;
   font-weight: 600;
@@ -795,7 +1032,7 @@ button {
   border-radius: var(--radius);
   padding: 14px;
   background: var(--bg-elevated);
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  transition: border-color var(--transition-fast) var(--ease), background-color var(--transition-fast) var(--ease);
 }
 
 .quicklink-card:hover {
@@ -819,6 +1056,86 @@ button {
   color: var(--muted);
   font-size: 13.5px;
   line-height: 1.7;
+}
+
+.overview-workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.overview-workspace-grid .card {
+  margin-bottom: 0;
+}
+
+.overview-link {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.overview-link:hover {
+  text-decoration: underline;
+}
+
+.overview-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.overview-recent-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.overview-recent-item:last-child {
+  border-bottom: none;
+}
+
+.overview-recent-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.overview-recent-symbol {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.overview-recent-meta {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-recent-figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.overview-profile-summary .profile-card-header {
+  margin-bottom: 8px;
+}
+
+.overview-profile-summary .profile-metrics {
+  margin: 0;
 }
 
 /* ---------- Asset header ---------- */
@@ -886,6 +1203,7 @@ button {
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none;
 }
 
 .chart-tooltip {
@@ -897,7 +1215,8 @@ button {
   font-size: 12px;
   pointer-events: none;
   min-width: 110px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-elevated);
+  transition: opacity var(--transition-fast) var(--ease);
 }
 
 .chart-tooltip-date {
@@ -984,7 +1303,7 @@ button {
 }
 
 .signal-type {
-  font-size: 11.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--muted);
@@ -1046,7 +1365,7 @@ button {
 }
 
 .metric-label {
-  font-size: 11.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--muted);
@@ -1143,7 +1462,7 @@ button {
 
 .sentiment-pill {
   display: inline-block;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 3px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -1175,7 +1494,7 @@ button {
 .sentiment-bar {
   display: flex;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--border);
   margin-bottom: 8px;
@@ -1224,6 +1543,111 @@ button {
   .skeleton-line {
     animation: none;
   }
+}
+
+/* ---------- Content reveal (resolved data replacing a skeleton/loading state) ---------- */
+.content-fade-in {
+  animation: content-fade-in var(--transition-slow) var(--ease) both;
+}
+
+@keyframes content-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content-fade-in {
+    animation: none;
+  }
+}
+
+/* Blanket safety net, not a per-rule audit: every transition/animation added above (sidebar
+   collapse, theme crossfade, button press, dropdown panels, chevron rotation, chart tooltip
+   fade, etc.) is duration-driven by the --transition-* tokens or a CSS animation, so collapsing
+   both to near-zero here covers all of them - current and future - in one place, rather than
+   chasing down every individual rule by hand. 0.001ms rather than 0 so no transition/animation
+   silently becomes "no transition at all" in a way that could skip a transitionend-driven state
+   change (this codebase has none today, but the margin costs nothing). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- AI Market Analysis: observed-data vs. model-interpretation cues ---------- */
+.ai-generated-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: var(--accent-ring);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.ai-proposed-tag {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ai-source-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.ai-source-link:hover {
+  text-decoration: underline;
+}
+
+/* Native <details>/<summary> - keyboard- and screen-reader-operable with zero extra JS, and
+   respects reduced-motion by construction (no custom open/close transition to suppress). */
+.ai-details {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ai-details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 18px 20px;
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-details > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 5px 0 5px 7px;
+  border-color: transparent transparent transparent var(--muted);
+  transition: transform var(--transition-fast) var(--ease);
+  flex: 0 0 auto;
+}
+
+.ai-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.ai-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-details-body {
+  padding: 0 20px 20px;
 }
 
 /* ---------- Error state ---------- */
@@ -1285,7 +1709,8 @@ button {
 .backtest-field input:focus,
 .backtest-field select:focus {
   outline: none;
-  border-color: var(--accent, #5b9dff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .backtest-field input[readonly] {
@@ -1295,7 +1720,7 @@ button {
 
 .backtest-field-hint {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -1315,7 +1740,7 @@ button {
   background: none;
   border: none;
   padding: 0;
-  accent-color: var(--accent, #5b9dff);
+  accent-color: var(--accent);
 }
 
 .backtest-asset-toggle {
@@ -1334,8 +1759,8 @@ button {
 }
 
 .backtest-toggle-btn.active {
-  background: var(--accent, #5b9dff);
-  color: var(--accent-fg, #0b1420);
+  background: var(--accent);
+  color: var(--accent-fg);
   border-color: transparent;
   font-weight: 600;
 }
@@ -1344,6 +1769,27 @@ button {
   font-size: 14px;
   color: var(--muted);
   margin: 8px 0 0;
+}
+
+.backtest-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.backtest-fieldset + .backtest-fieldset {
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+legend.backtest-subheading {
+  padding: 0;
+  margin: 0;
+  width: 100%;
 }
 
 .backtest-validation-error {
@@ -1414,7 +1860,7 @@ button {
 
 .backtest-diagnostics-label {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -1444,7 +1890,7 @@ button {
   top: 0;
   background: var(--card-bg);
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   z-index: 1;
@@ -1464,7 +1910,7 @@ button {
 }
 
 .backtest-history-row:focus-visible {
-  outline: 2px solid var(--accent, #5b9dff);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
@@ -1501,7 +1947,7 @@ button {
   letter-spacing: 0.03em;
   color: var(--muted);
   background: var(--neutral-bg);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 2px 8px;
   white-space: nowrap;
 }
@@ -1520,7 +1966,7 @@ button {
 }
 
 .profile-metrics span {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--muted);
@@ -1531,7 +1977,7 @@ button {
 }
 
 .profile-metrics small {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1547,10 +1993,140 @@ button {
   font-size: 13px;
 }
 
+/* ---------- Paper trading ---------- */
+.pt-banner {
+  border-left: 3px solid var(--accent);
+}
+
+.pt-banner p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.pt-banner strong {
+  color: var(--fg);
+}
+
+.pt-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pt-switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pt-switcher-row select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 14px;
+  min-width: 200px;
+  flex: 1 1 200px;
+}
+
+.pt-switcher-row select option {
+  color: var(--fg);
+  background-color: var(--bg-elevated);
+}
+
+.pt-switcher-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* Buy/Sell is the one toggle pair in this app where color-coding the active state carries real
+   meaning (long vs. short), unlike the plain accent-colored .backtest-toggle-btn.active it
+   otherwise mirrors. --accent-fg already flips light/dark per theme to contrast against a
+   saturated fill, which is exactly what's needed against --positive/--negative too. */
+.pt-side-buy.active {
+  background: var(--positive);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.pt-side-sell.active {
+  background: var(--negative);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.pt-warnings {
+  margin: 10px 0;
+}
+
+.pt-warning-line {
+  color: var(--negative);
+  font-size: 13px;
+  margin: 2px 0;
+  line-height: 1.5;
+}
+
+.pt-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+/* Native <details> for the close-position action, mirroring .ai-details' established pattern -
+   keyboard- and screen-reader-operable with no custom JS toggle and no reduced-motion handling
+   to write (there's no open/close transition to suppress). */
+.pt-close-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.pt-close-details > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.pt-close-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pt-close-details[open] > summary {
+  margin-bottom: 10px;
+}
+
+.pt-close-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pt-close-form .backtest-form-actions {
+  justify-content: flex-start;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
-  .app-shell {
+  .app-shell,
+  :root[data-sidebar="collapsed"] .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar-collapse-btn {
+    display: none;
+  }
+
+  .sidebar-nav-item-label,
+  .sidebar-brand-text {
+    display: inline !important;
   }
 
   .sidebar {
@@ -1558,7 +2134,7 @@ button {
     inset: 0 auto 0 0;
     width: var(--sidebar-width);
     transform: translateX(-100%);
-    transition: transform 0.18s ease;
+    transition: transform var(--transition-slow) var(--ease);
     z-index: 20;
   }
 
@@ -1616,6 +2192,10 @@ button {
     display: none;
   }
 
+  .overview-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chart-wrapper {
     height: 240px;
   }
@@ -1626,6 +2206,14 @@ button {
 
   .backtest-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pt-switcher-row select {
+    flex: 1 1 100%;
+  }
+
+  .pt-pagination {
+    flex-wrap: wrap;
   }
 
   .auth-card {
