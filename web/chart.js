@@ -1,4 +1,5 @@
 import { formatDate, formatCurrency, formatNumber } from "./format.js";
+import { THEME_CHANGE_EVENT } from "./state.js";
 
 const VOLUME_STRIP_RATIO = 0.22;
 const MIN_CANDLE_WIDTH_PX = 3;
@@ -24,6 +25,7 @@ const chartState = {
   themeListener: null,
   mouseMoveHandler: null,
   mouseLeaveHandler: null,
+  touchMoveHandler: null,
   // Defaults to the stock "$X.XX" formatter; setChartCandles passes a forex-aware formatter
   // (4-decimal, no "$") when the symbol being charted is a forex pair — see format.js's
   // formatPrice/isForexSymbol.
@@ -73,7 +75,7 @@ function xForIndex(index, count, plotLeft, plotRight) {
 function drawEmptyState(ctx, width, height, text) {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = themeColor("--muted");
-  ctx.font = "13px sans-serif";
+  ctx.font = "13px -apple-system, \"Segoe UI\", Roboto, sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(text, width / 2, height / 2);
 }
@@ -92,7 +94,7 @@ function drawGrid(ctx, plotLeft, plotRight, priceTop, priceBottom) {
 
 function drawDateAxis(ctx, candles, plotLeft, plotRight, y) {
   ctx.fillStyle = themeColor("--muted");
-  ctx.font = "11px sans-serif";
+  ctx.font = "11px -apple-system, \"Segoe UI\", Roboto, sans-serif";
   ctx.textAlign = "center";
   const labelCount = Math.min(5, candles.length);
   if (labelCount < 2) return;
@@ -172,8 +174,20 @@ function drawCandlesticks(ctx, candles, plotLeft, plotRight, priceTop, priceBott
 
     const bodyTop = yFor(Math.max(open, close));
     const bodyBottom = yFor(Math.min(open, close));
-    ctx.fillStyle = color;
-    ctx.fillRect(x - bodyWidth / 2, bodyTop, bodyWidth, Math.max(1, bodyBottom - bodyTop));
+    const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+
+    // Direction must not depend on color alone (colorblind users) - hollow body for bullish
+    // candles, filled body for bearish, an independent shape cue layered on top of the color.
+    if (isUp) {
+      ctx.fillStyle = themeColor("--card-bg");
+      ctx.fillRect(x - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
+    }
   });
 
   return { min, max };
@@ -201,7 +215,7 @@ function drawVolume(ctx, candles, plotLeft, plotRight, volumeTop, volumeBottom) 
 
 function drawPriceLabels(ctx, min, max, plotLeft, priceTop, priceBottom) {
   ctx.fillStyle = themeColor("--fg");
-  ctx.font = "11px sans-serif";
+  ctx.font = "11px -apple-system, \"Segoe UI\", Roboto, sans-serif";
   ctx.textAlign = "right";
   ctx.fillText(chartState.priceFormatter(max), plotLeft - 6, priceTop + 10);
   ctx.fillText(chartState.priceFormatter(min), plotLeft - 6, priceBottom);
@@ -242,7 +256,7 @@ function hideTooltip() {
   }
 }
 
-function handleMouseMove(event) {
+function handlePointerX(clientX) {
   const canvas = chartState.canvas;
   const tooltipEl = chartState.tooltipEl;
   if (!canvas || !tooltipEl) return;
@@ -254,7 +268,7 @@ function handleMouseMove(event) {
   }
 
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
+  const x = clientX - rect.left;
   const { plotLeft, plotRight } = layout(rect.width, rect.height);
 
   if (x < plotLeft || x > plotRight) {
@@ -281,6 +295,20 @@ function handleMouseMove(event) {
   tooltipEl.style.top = "8px";
 }
 
+function handleMouseMove(event) {
+  handlePointerX(event.clientX);
+}
+
+// Touch devices have no hover - without this, a candle's OHLC values are only ever reachable by
+// mouse, which makes the tooltip entirely unavailable on phones/tablets despite the chart itself
+// being fully responsive down to the 480px breakpoint. preventDefault keeps a drag across the
+// canvas from also scrolling the page while inspecting candles.
+function handleTouchMove(event) {
+  if (event.touches.length === 0) return;
+  event.preventDefault();
+  handlePointerX(event.touches[0].clientX);
+}
+
 export function initChart(canvas, tooltipEl) {
   if (chartState.resizeObserver) {
     chartState.resizeObserver.disconnect();
@@ -288,9 +316,14 @@ export function initChart(canvas, tooltipEl) {
   if (chartState.canvas && chartState.mouseMoveHandler) {
     chartState.canvas.removeEventListener("mousemove", chartState.mouseMoveHandler);
     chartState.canvas.removeEventListener("mouseleave", chartState.mouseLeaveHandler);
+    chartState.canvas.removeEventListener("touchstart", chartState.touchMoveHandler);
+    chartState.canvas.removeEventListener("touchmove", chartState.touchMoveHandler);
+    chartState.canvas.removeEventListener("touchend", chartState.mouseLeaveHandler);
+    chartState.canvas.removeEventListener("touchcancel", chartState.mouseLeaveHandler);
   }
   if (chartState.themeListener) {
     window.matchMedia("(prefers-color-scheme: dark)").removeEventListener("change", chartState.themeListener);
+    window.removeEventListener(THEME_CHANGE_EVENT, chartState.themeListener);
   }
 
   chartState.canvas = canvas;
@@ -307,11 +340,19 @@ export function initChart(canvas, tooltipEl) {
 
   chartState.themeListener = () => render();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", chartState.themeListener);
+  // Manual theme-toggle override - the OS-level listener above only fires on a real OS scheme
+  // change, never on this app's own in-page toggle (see THEME_CHANGE_EVENT in state.js).
+  window.addEventListener(THEME_CHANGE_EVENT, chartState.themeListener);
 
   chartState.mouseMoveHandler = handleMouseMove;
   chartState.mouseLeaveHandler = hideTooltip;
+  chartState.touchMoveHandler = handleTouchMove;
   canvas.addEventListener("mousemove", chartState.mouseMoveHandler);
   canvas.addEventListener("mouseleave", chartState.mouseLeaveHandler);
+  canvas.addEventListener("touchstart", chartState.touchMoveHandler, { passive: false });
+  canvas.addEventListener("touchmove", chartState.touchMoveHandler, { passive: false });
+  canvas.addEventListener("touchend", chartState.mouseLeaveHandler);
+  canvas.addEventListener("touchcancel", chartState.mouseLeaveHandler);
 }
 
 export function setChartCandles(candles, priceFormatter = formatCurrency) {

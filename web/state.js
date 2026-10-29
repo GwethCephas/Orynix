@@ -1,5 +1,15 @@
 const REFRESH_TOKEN_STORAGE_KEY = "orynix.refreshToken";
+const THEME_STORAGE_KEY = "orynix.theme";
+const RECENT_SYMBOLS_STORAGE_KEY = "orynix.recentSymbols";
+const MAX_RECENT_SYMBOLS = 6;
 const CACHE_TTL_MS = 60_000;
+
+// A manual theme override needs canvas-based charts (chart.js/equityCurveChart.js) to redraw with
+// the new theme colors, but must NOT go through notify()/router.js's full current-route
+// re-render - that would remount whatever page is open and discard any in-page-only state (a
+// filled-in form, AI analysis results, etc.) just because the user flipped a visual preference.
+// This dedicated event lets only the chart modules react; see setTheme() below.
+export const THEME_CHANGE_EVENT = "orynix:theme-change";
 
 const listeners = new Set();
 
@@ -22,6 +32,83 @@ function writeStoredRefreshToken(value) {
   } catch {
     // Already warned in readStoredRefreshToken; the session still works in-memory for this tab.
   }
+}
+
+function readStoredJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Non-fatal: the preference just won't survive a reload for this browser/privacy mode.
+  }
+}
+
+// Manual theme override. Absent entirely (never written) means "follow the OS
+// prefers-color-scheme", preserving this app's original system-driven behavior for anyone who
+// never touches the toggle. index.html applies this synchronously before first paint to avoid a
+// flash of the wrong theme.
+function readStoredTheme() {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === "dark" || value === "light" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getTheme() {
+  return document.documentElement.getAttribute("data-theme") || readStoredTheme();
+}
+
+// The theme actually rendered right now: the manual override if one is set, otherwise whatever
+// the OS reports. Used only to decide which way the toggle flips next - getTheme() above stays
+// the "is there a manual override" check other code may still want.
+export function getEffectiveTheme() {
+  const override = getTheme();
+  if (override) return override;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+export function setTheme(theme) {
+  if (theme === "dark" || theme === "light") {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Still applied for this page view via the attribute set above.
+    }
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    try {
+      localStorage.removeItem(THEME_STORAGE_KEY);
+    } catch {
+      // Attribute removal above already restored system-driven behavior for this page view.
+    }
+  }
+  // Deliberately not notify() - see THEME_CHANGE_EVENT's comment above.
+  window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
+}
+
+let recentSymbols = readStoredJson(RECENT_SYMBOLS_STORAGE_KEY, []);
+
+// Real symbols the user actually navigated to - a client-side convenience list, not a backend
+// watchlist feature (no such endpoint exists). Most-recent-first, deduplicated, capped small.
+export function getRecentSymbols() {
+  return recentSymbols;
+}
+
+function pushRecentSymbol(symbol) {
+  if (!symbol) return;
+  recentSymbols = [symbol, ...recentSymbols.filter((s) => s !== symbol)].slice(0, MAX_RECENT_SYMBOLS);
+  writeStoredJson(RECENT_SYMBOLS_STORAGE_KEY, recentSymbols);
 }
 
 const session = {
@@ -109,6 +196,7 @@ export function getCurrentSymbol() {
 
 export function setCurrentSymbol(symbol) {
   currentSymbol = symbol;
+  pushRecentSymbol(symbol);
   notify();
 }
 

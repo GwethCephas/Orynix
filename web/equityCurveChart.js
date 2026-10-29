@@ -1,4 +1,5 @@
 import { formatDate } from "./format.js";
+import { THEME_CHANGE_EVENT } from "./state.js";
 
 const AXIS_PADDING_LEFT = 60;
 const AXIS_PADDING_RIGHT = 12;
@@ -25,7 +26,7 @@ function resizeCanvasToDisplaySize(canvas) {
 function drawEmptyState(ctx, width, height, text) {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = themeColor("--muted");
-  ctx.font = "13px sans-serif";
+  ctx.font = "13px -apple-system, \"Segoe UI\", Roboto, sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(text, width / 2, height / 2);
 }
@@ -110,7 +111,7 @@ export function createEquityCurveChart(canvas, tooltipEl) {
     ctx.stroke();
 
     ctx.fillStyle = themeColor("--fg");
-    ctx.font = "11px sans-serif";
+    ctx.font = "11px -apple-system, \"Segoe UI\", Roboto, sans-serif";
     ctx.textAlign = "right";
     ctx.fillText(currencyFormatter(max), left - 6, top + 10);
     ctx.fillText(currencyFormatter(min), left - 6, bottom);
@@ -131,10 +132,10 @@ export function createEquityCurveChart(canvas, tooltipEl) {
     if (tooltipEl) tooltipEl.hidden = true;
   }
 
-  function handleMouseMove(event) {
+  function handlePointerX(clientX) {
     if (!tooltipEl || points.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
+    const x = clientX - rect.left;
     const { left, right } = layout(rect.width, rect.height);
     if (x < left || x > right) {
       hideTooltip();
@@ -155,12 +156,28 @@ export function createEquityCurveChart(canvas, tooltipEl) {
     tooltipEl.style.top = "8px";
   }
 
+  function handleMouseMove(event) {
+    handlePointerX(event.clientX);
+  }
+
   function handleMouseLeave() {
     hideTooltip();
   }
 
+  // Touch devices have no hover - without this the equity-curve tooltip, like the price chart's,
+  // would only ever be reachable by mouse.
+  function handleTouchMove(event) {
+    if (event.touches.length === 0) return;
+    event.preventDefault();
+    handlePointerX(event.touches[0].clientX);
+  }
+
   canvas.addEventListener("mousemove", handleMouseMove);
   canvas.addEventListener("mouseleave", handleMouseLeave);
+  canvas.addEventListener("touchstart", handleTouchMove, { passive: false });
+  canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+  canvas.addEventListener("touchend", handleMouseLeave);
+  canvas.addEventListener("touchcancel", handleMouseLeave);
 
   const resizeObserver = new ResizeObserver(() => render());
   resizeObserver.observe(canvas);
@@ -168,6 +185,9 @@ export function createEquityCurveChart(canvas, tooltipEl) {
   const darkMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   const themeListener = () => render();
   darkMediaQuery.addEventListener("change", themeListener);
+  // Manual theme-toggle override - darkMediaQuery only fires on a real OS scheme change, never
+  // on this app's own in-page toggle (see THEME_CHANGE_EVENT in state.js).
+  window.addEventListener(THEME_CHANGE_EVENT, themeListener);
 
   return {
     setPoints(newPoints, formatter) {
@@ -178,8 +198,13 @@ export function createEquityCurveChart(canvas, tooltipEl) {
     destroy() {
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
+      canvas.removeEventListener("touchstart", handleTouchMove);
+      canvas.removeEventListener("touchmove", handleTouchMove);
+      canvas.removeEventListener("touchend", handleMouseLeave);
+      canvas.removeEventListener("touchcancel", handleMouseLeave);
       resizeObserver.disconnect();
       darkMediaQuery.removeEventListener("change", themeListener);
+      window.removeEventListener(THEME_CHANGE_EVENT, themeListener);
     },
   };
 }
