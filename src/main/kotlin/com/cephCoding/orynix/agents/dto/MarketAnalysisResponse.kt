@@ -13,6 +13,7 @@ import com.cephCoding.orynix.marketintelligence.domain.MarketIntelligenceContext
 import com.cephCoding.orynix.riskcalculator.domain.RiskCalculationResult
 import java.math.BigDecimal
 import java.time.Instant
+import java.util.UUID
 
 data class AnalysisProvenanceResponse(
     val source: AnalysisSource,
@@ -57,6 +58,7 @@ data class RiskSizingResponse(
 }
 
 data class TradeSetupProposalResponse(
+    val id: UUID,
     val direction: TradeDirection,
     val entryPrice: BigDecimal,
     val stopLossPrice: BigDecimal,
@@ -67,6 +69,7 @@ data class TradeSetupProposalResponse(
 ) {
     companion object {
         fun from(proposal: TradeSetupProposal) = TradeSetupProposalResponse(
+            id = proposal.id,
             direction = proposal.setup.direction,
             entryPrice = proposal.setup.entryPrice,
             stopLossPrice = proposal.setup.stopLossPrice,

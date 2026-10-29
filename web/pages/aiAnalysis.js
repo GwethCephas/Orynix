@@ -1,5 +1,6 @@
-import { getAiMarketAnalysis, listTradingAccountProfiles } from "../api.js";
+import { getAiMarketAnalysis, listTradingAccountProfiles, createTradeSetupFromProposal, ApiError } from "../api.js";
 import { getCurrentSymbol } from "../state.js";
+import { navigate } from "../router.js";
 import { createSectionState, loadInto, renderStateBlock, skeletonHtml } from "../components/stateBlock.js";
 import { metricCardHtml } from "../components/metricCard.js";
 import { escapeHtml, formatNumber, formatPercent, formatDateTime } from "../format.js";
@@ -190,6 +191,7 @@ export function mount(container) {
           <div class="card">
             <div class="section-header">
               <span class="signal-badge ${t.direction === "LONG" ? "positive" : "negative"}"><span class="signal-state">${escapeHtml(t.direction)}</span></span>
+              <span class="ai-proposed-tag">Proposed &middot; not executed</span>
             </div>
             <p>${escapeHtml(t.rationale)}</p>
             <div class="metric-grid">
@@ -203,9 +205,38 @@ export function mount(container) {
                 ? `<p class="section-disclaimer">${t.limitations.map((l) => escapeHtml(l)).join(" ")}</p>`
                 : ""
             }
+            <div class="ai-save-setup-row" data-proposal-id="${escapeHtml(t.id)}">
+              <button type="button" class="ai-save-setup-btn">Save as Trade Setup</button>
+              <span class="ai-save-setup-status section-status"></span>
+            </div>
           </div>`;
       })
       .join("");
+  }
+
+  async function saveProposalAsTradeSetup(row) {
+    const button = row.querySelector(".ai-save-setup-btn");
+    const statusEl = row.querySelector(".ai-save-setup-status");
+    const proposalId = row.dataset.proposalId;
+    button.disabled = true;
+    button.textContent = "Saving...";
+    statusEl.textContent = "";
+    try {
+      const saved = await createTradeSetupFromProposal({ aiProposalId: proposalId, accountProfileId: null });
+      button.remove();
+      statusEl.innerHTML = `Saved as a draft trade setup. <a href="#" class="ai-saved-setup-link">Review it &rarr;</a>`;
+      statusEl.dataset.savedId = saved.id;
+      statusEl.querySelector(".ai-saved-setup-link").addEventListener("click", (event) => {
+        event.preventDefault();
+        navigate("trade-setups");
+      });
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = "Save as Trade Setup";
+      // Treat the backend as the source of truth - surface its own message verbatim rather than
+      // inventing a generic one (e.g. a 409 if this exact proposal was already saved elsewhere).
+      statusEl.textContent = err instanceof ApiError ? err.message : "Could not save this trade setup.";
+    }
   }
 
   function renderResults() {
@@ -215,32 +246,57 @@ export function mount(container) {
       emptyText: "Submit the form above to run an AI market analysis.",
       onRetry: () => runAnalysis(),
       renderContent: (analysis) => {
+        const sections = Object.values(analysis.evidenceStatus);
+        const availableCount = sections.filter((s) => s.status === "AVAILABLE").length;
+        const allAvailable = availableCount === sections.length;
+
         resultsPanelEl.innerHTML = `
-          <section class="card">
+          <section class="card content-fade-in">
             <div class="section-header">
-              <h2>Market assessment</h2>
+              <h2>${escapeHtml(analysis.symbol)} <span class="profile-badge">${escapeHtml(analysis.assetType)}</span> Market assessment <span class="ai-generated-tag">AI-generated</span></h2>
               <span class="section-asof">As of ${formatDateTime(analysis.asOf)}</span>
             </div>
             <p>${escapeHtml(analysis.marketAssessment)}</p>
+            <p class="section-disclaimer">
+              This is the model's interpretation of the observed market data, technical indicators,
+              signals, news, and sentiment below - not a guarantee of any outcome. For the
+              underlying deterministic data itself, see
+              <a href="#" class="ai-source-link" data-path="analysis">Market Analysis</a>,
+              <a href="#" class="ai-source-link" data-path="signals">Signals</a>, and
+              <a href="#" class="ai-source-link" data-path="news">News &amp; Sentiment</a>.
+            </p>
             <p class="section-status">
               Source: ${escapeHtml(analysis.provenance.source)} &middot; ${escapeHtml(analysis.provenance.providerName)} (${escapeHtml(analysis.provenance.model)})
             </p>
           </section>
 
-          <section class="card">
+          <section class="card content-fade-in">
             <h2>Scenarios</h2>
             ${renderScenarios(analysis.scenarios)}
           </section>
 
-          <section class="card">
+          <section class="card content-fade-in">
             <h2>Proposed trade setups</h2>
             ${renderTradeSetups(analysis.tradeSetups)}
           </section>
 
-          <section class="card">
-            <h2>Evidence availability</h2>
-            ${renderEvidenceStatus(analysis.evidenceStatus)}
-          </section>`;
+          <details class="card ai-details content-fade-in" ${allAvailable ? "" : "open"}>
+            <summary>Evidence availability &middot; ${availableCount}/${sections.length} sections available</summary>
+            <div class="ai-details-body">
+              ${renderEvidenceStatus(analysis.evidenceStatus)}
+            </div>
+          </details>`;
+
+        resultsPanelEl.querySelectorAll(".ai-source-link").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            navigate(link.dataset.path, { symbol });
+          });
+        });
+
+        resultsPanelEl.querySelectorAll(".ai-save-setup-row").forEach((row) => {
+          row.querySelector(".ai-save-setup-btn")?.addEventListener("click", () => saveProposalAsTradeSetup(row));
+        });
       },
     });
   }

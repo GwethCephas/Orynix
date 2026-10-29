@@ -11,6 +11,7 @@ import * as companyPage from "./pages/company.js";
 import * as backtestsPage from "./pages/backtests.js";
 import * as tradingAccountsPage from "./pages/tradingAccounts.js";
 import * as aiAnalysisPage from "./pages/aiAnalysis.js";
+import * as tradeSetupsPage from "./pages/tradeSetups.js";
 import * as paperTradingPage from "./pages/paperTrading.js";
 
 const root = document.getElementById("app-root");
@@ -25,6 +26,7 @@ registerRoute("company", companyPage);
 registerRoute("backtests", backtestsPage);
 registerRoute("trading-accounts", tradingAccountsPage);
 registerRoute("ai-analysis", aiAnalysisPage);
+registerRoute("trade-setups", tradeSetupsPage);
 registerRoute("paper-trading", paperTradingPage);
 setDefaultRoute("overview");
 

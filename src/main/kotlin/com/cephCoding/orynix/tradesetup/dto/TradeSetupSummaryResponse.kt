@@ -19,6 +19,9 @@ data class TradeSetupSummaryResponse(
     val stopLossPrice: BigDecimal?,
     val targetPrice: BigDecimal?,
     val source: TradeSetupSource,
+    val aiProposalId: UUID?,
+    val backtestRunId: UUID?,
+    val paperOrderId: UUID?,
     val status: TradeSetupStatus,
     val createdAt: Instant,
 ) {
@@ -32,6 +35,9 @@ data class TradeSetupSummaryResponse(
             stopLossPrice = setup.stopLossPrice,
             targetPrice = setup.targetPrice,
             source = setup.source,
+            aiProposalId = setup.aiProposalId,
+            backtestRunId = setup.backtestRunId,
+            paperOrderId = setup.paperOrderId,
             status = setup.status,
             createdAt = setup.createdAt,
         )

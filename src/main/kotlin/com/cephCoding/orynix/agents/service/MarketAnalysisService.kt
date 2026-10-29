@@ -1,11 +1,14 @@
 package com.cephCoding.orynix.agents.service
 
+import com.cephCoding.orynix.agents.domain.AnalysisProvenance
 import com.cephCoding.orynix.agents.domain.ModelTradeSetup
 import com.cephCoding.orynix.agents.domain.TradeDirection
 import com.cephCoding.orynix.agents.domain.TradeSetupProposal
 import com.cephCoding.orynix.agents.dto.MarketAnalysisRequest
 import com.cephCoding.orynix.agents.dto.MarketAnalysisResponse
+import com.cephCoding.orynix.agents.model.AiTradeSetupProposalEntity
 import com.cephCoding.orynix.agents.provider.MarketAnalysisProvider
+import com.cephCoding.orynix.agents.repository.AiTradeSetupProposalRepository
 import com.cephCoding.orynix.marketintelligence.domain.MarketIntelligenceContext
 import com.cephCoding.orynix.marketintelligence.service.MarketIntelligenceService
 import com.cephCoding.orynix.riskcalculator.dto.RiskCalculationRequest
@@ -36,6 +39,7 @@ class MarketAnalysisService(
     private val provider: MarketAnalysisProvider,
     private val riskCalculatorService: RiskCalculatorService,
     private val tradingAccountService: TradingAccountService,
+    private val proposalRepository: AiTradeSetupProposalRepository,
 ) {
 
     fun analyze(userId: UUID, request: MarketAnalysisRequest): MarketAnalysisResponse {
@@ -50,11 +54,48 @@ class MarketAnalysisService(
         val evidence = evidenceContextBuilder.build(miContext)
         val modelAnalysis = provider.analyze(evidence)
 
-        val tradeSetups = modelAnalysis.tradeSetups
-            .mapNotNull { validateAgainstMarket(it, miContext) }
-            .map { attachSizing(it, userId, request, miContext.symbol) }
+        val validatedSetups = modelAnalysis.tradeSetups.mapNotNull { validateAgainstMarket(it, miContext) }
+        val persisted = persistProposals(userId, miContext, modelAnalysis.provenance, validatedSetups)
+        val tradeSetups = persisted.map { (id, setup) -> attachSizing(id, setup, userId, request, miContext.symbol) }
 
         return MarketAnalysisResponse.from(miContext, modelAnalysis, tradeSetups)
+    }
+
+    /**
+     * Persists each setup that survived semantic validation as a durable, server-verifiable
+     * AiTradeSetupProposalEntity (CLAUDE.md Section 21's Integration A) - the record a later
+     * POST /trade-setups/from-ai-proposal call looks up by id, copying symbol/direction/entry/
+     * stop/target/rationale/provenance from this row rather than trusting client-resubmitted
+     * values. Ids are client-assigned (CLAUDE.md Section 14), so they're already known before
+     * saveAll runs - no need to read back the saved/merged copies to learn them. Deliberately not
+     * wrapped in @Transactional: a plain saveAll on a Spring Data repository is already
+     * transactional on its own, and this method is a pure batch insert with no other write to
+     * keep atomic with it.
+     */
+    private fun persistProposals(
+        userId: UUID,
+        context: MarketIntelligenceContext,
+        provenance: AnalysisProvenance,
+        setups: List<ModelTradeSetup>,
+    ): List<Pair<UUID, ModelTradeSetup>> {
+        if (setups.isEmpty()) return emptyList()
+        val pairs = setups.map { setup ->
+            AiTradeSetupProposalEntity(
+                userId = userId,
+                assetType = context.assetType.name,
+                symbol = context.symbol,
+                direction = setup.direction.name,
+                entryPrice = setup.entryPrice,
+                stopLossPrice = setup.stopLossPrice,
+                takeProfitPrice = setup.takeProfitPrice,
+                rationale = setup.rationale,
+                providerName = provenance.providerName,
+                model = provenance.model,
+                analysisAsOf = context.asOf,
+            ) to setup
+        }
+        proposalRepository.saveAll(pairs.map { it.first })
+        return pairs.map { (entity, setup) -> entity.id to setup }
     }
 
     /**
@@ -63,12 +104,12 @@ class MarketAnalysisService(
      * quantity (CLAUDE.md Section 20). RiskCalculatorService itself remains the sole authority on
      * the arithmetic; this method only decides whether to call it and with what inputs.
      */
-    private fun attachSizing(setup: ModelTradeSetup, userId: UUID, request: MarketAnalysisRequest, symbol: String): TradeSetupProposal {
+    private fun attachSizing(id: UUID, setup: ModelTradeSetup, userId: UUID, request: MarketAnalysisRequest, symbol: String): TradeSetupProposal {
         if (setup.direction == TradeDirection.SHORT) {
-            return TradeSetupProposal(setup, null, listOf(MSG_SHORT_UNSUPPORTED))
+            return TradeSetupProposal(id, setup, null, listOf(MSG_SHORT_UNSUPPORTED))
         }
         if (request.accountProfileId == null && request.equity == null) {
-            return TradeSetupProposal(setup, null, listOf(MSG_NO_ACCOUNT_CONTEXT))
+            return TradeSetupProposal(id, setup, null, listOf(MSG_NO_ACCOUNT_CONTEXT))
         }
         val result = riskCalculatorService.calculate(
             userId,
@@ -83,7 +124,7 @@ class MarketAnalysisService(
                 takeProfitPrice = setup.takeProfitPrice,
             ),
         )
-        return TradeSetupProposal(setup, result, result.limitations)
+        return TradeSetupProposal(id, setup, result, result.limitations)
     }
 
     companion object {

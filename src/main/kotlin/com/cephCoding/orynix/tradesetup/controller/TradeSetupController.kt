@@ -2,9 +2,13 @@ package com.cephCoding.orynix.tradesetup.controller
 
 import com.cephCoding.orynix.instrument.domain.AssetType
 import com.cephCoding.orynix.tradesetup.domain.TradeSetupStatus
+import com.cephCoding.orynix.tradesetup.dto.TradeSetupBacktestLinkRequest
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupClosureRequest
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupCreateRequest
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupDecisionRequest
+import com.cephCoding.orynix.tradesetup.dto.TradeSetupFromProposalRequest
+import com.cephCoding.orynix.tradesetup.dto.TradeSetupPaperOrderRequest
+import com.cephCoding.orynix.tradesetup.dto.TradeSetupPaperOrderResponse
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupResponse
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupRiskEvaluationRequest
 import com.cephCoding.orynix.tradesetup.dto.TradeSetupRiskEvaluationResponse
@@ -92,4 +96,32 @@ class TradeSetupController(private val tradeSetupService: TradeSetupService) {
         TradeSetupRiskEvaluationResponse.from(
             tradeSetupService.evaluateRisk(userId, id, request ?: TradeSetupRiskEvaluationRequest()),
         )
+
+    /** Integration A (CLAUDE.md Section 21): saves a setup from a server-persisted AI proposal. */
+    @PostMapping("/from-ai-proposal")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun createTradeSetupFromProposal(
+        @AuthenticationPrincipal userId: UUID,
+        @Valid @RequestBody request: TradeSetupFromProposalRequest,
+    ): TradeSetupResponse = TradeSetupResponse.from(tradeSetupService.createFromProposal(userId, request))
+
+    /** Integration B (CLAUDE.md Section 21): links an already-run backtest to this setup. */
+    @PostMapping("/{id}/backtest-link")
+    fun linkTradeSetupBacktest(
+        @AuthenticationPrincipal userId: UUID,
+        @PathVariable id: UUID,
+        @Valid @RequestBody request: TradeSetupBacktestLinkRequest,
+    ): TradeSetupResponse = TradeSetupResponse.from(tradeSetupService.linkBacktest(userId, id, request))
+
+    /** Integration C (CLAUDE.md Section 21): "Practice in Paper Trading" from an ACCEPTED setup. */
+    @PostMapping("/{id}/paper-order")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun practiceTradeSetupInPaperTrading(
+        @AuthenticationPrincipal userId: UUID,
+        @PathVariable id: UUID,
+        @Valid @RequestBody request: TradeSetupPaperOrderRequest,
+    ): TradeSetupPaperOrderResponse {
+        val (tradeSetup, order) = tradeSetupService.practiceInPaperTrading(userId, id, request)
+        return TradeSetupPaperOrderResponse.from(tradeSetup, order)
+    }
 }

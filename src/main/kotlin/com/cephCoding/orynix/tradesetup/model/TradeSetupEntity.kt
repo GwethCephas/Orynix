@@ -67,8 +67,20 @@ class TradeSetupEntity(
     @Column(name = "ai_analysis_as_of")
     val aiAnalysisAsOf: Instant?,
 
+    @Column(name = "ai_proposal_id")
+    val aiProposalId: UUID? = null,
+
     @Column(name = "account_profile_id")
     var accountProfileId: UUID?,
+
+    @Column(name = "backtest_run_id")
+    var backtestRunId: UUID? = null,
+
+    @Column(name = "paper_order_id")
+    var paperOrderId: UUID? = null,
+
+    @Column(name = "paper_account_id")
+    var paperAccountId: UUID? = null,
 
     @Column(nullable = false)
     var status: String = TradeSetupStatus.DRAFT.name,
@@ -112,7 +124,11 @@ class TradeSetupEntity(
         aiProviderName = aiProviderName,
         aiModel = aiModel,
         aiAnalysisAsOf = aiAnalysisAsOf,
+        aiProposalId = aiProposalId,
         accountProfileId = accountProfileId,
+        backtestRunId = backtestRunId,
+        paperOrderId = paperOrderId,
+        paperAccountId = paperAccountId,
         status = TradeSetupStatus.valueOf(status),
         decisionNotes = decisionNotes,
         decidedAt = decidedAt,

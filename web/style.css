@@ -1688,13 +1688,16 @@ button {
 }
 
 .backtest-field input,
-.backtest-field select {
+.backtest-field select,
+.backtest-field textarea {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 9px 10px;
   font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
 }
 
 /* Some browsers render a native <select>'s popup list as a separate UI surface that does not
@@ -1707,7 +1710,8 @@ button {
 }
 
 .backtest-field input:focus,
-.backtest-field select:focus {
+.backtest-field select:focus,
+.backtest-field textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);

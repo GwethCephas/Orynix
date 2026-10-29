@@ -16,6 +16,7 @@ const NAV_ICONS = {
   backtests: `<circle cx="12" cy="13" r="8.5"/><polyline points="12 9 12 13 15 15"/><path d="M8.5 3.5 5 6"/><path d="M19 6l-3.5-2.5"/>`,
   "trading-accounts": `<rect x="2" y="5" width="20" height="14" rx="1.5"/><line x1="2" y1="10" x2="22" y2="10"/>`,
   "ai-analysis": `<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1.5" x2="9" y2="5"/><line x1="15" y1="1.5" x2="15" y2="5"/><line x1="9" y1="19" x2="9" y2="22.5"/><line x1="15" y1="19" x2="15" y2="22.5"/><line x1="19" y1="9" x2="22.5" y2="9"/><line x1="19" y1="15" x2="22.5" y2="15"/><line x1="1.5" y1="9" x2="5" y2="9"/><line x1="1.5" y1="15" x2="5" y2="15"/>`,
+  "trade-setups": `<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>`,
   "paper-trading": `<rect x="4" y="3" width="16" height="18" rx="1.5"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12.5" y2="16"/>`,
 };
 
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { path: "backtests", label: "Backtesting" },
   { path: "trading-accounts", label: "Trading Accounts" },
   { path: "ai-analysis", label: "AI Market Analysis" },
+  { path: "trade-setups", label: "Trade Setups" },
   { path: "paper-trading", label: "Paper Trading" },
 ];
 

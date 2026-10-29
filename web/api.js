@@ -230,3 +230,56 @@ export function closePaperPosition(accountId, positionId, request) {
 export function listPaperLedgerEntries(accountId, page = 0, size = 20) {
   return apiRequest(`/api/v1/paper-trading/accounts/${encodeURIComponent(accountId)}/ledger?page=${page}&size=${size}`, { useAuth: true });
 }
+
+export function createTradeSetup(request) {
+  return apiRequest("/api/v1/trade-setups", { method: "POST", body: request, useAuth: true });
+}
+
+export function createTradeSetupFromProposal(request) {
+  return apiRequest("/api/v1/trade-setups/from-ai-proposal", { method: "POST", body: request, useAuth: true });
+}
+
+export function listTradeSetups({ status, assetType, symbol } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (assetType) params.set("assetType", assetType);
+  if (symbol) params.set("symbol", symbol);
+  const query = params.toString();
+  return apiRequest(`/api/v1/trade-setups${query ? `?${query}` : ""}`, { useAuth: true });
+}
+
+export function getTradeSetup(id) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}`, { useAuth: true });
+}
+
+export function updateTradeSetup(id, request) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}`, { method: "PUT", body: request, useAuth: true });
+}
+
+export function expireTradeSetup(id) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}`, { method: "DELETE", useAuth: true });
+}
+
+export function decideTradeSetup(id, request) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}/decision`, { method: "POST", body: request, useAuth: true });
+}
+
+export function closeTradeSetup(id, request) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}/closure`, { method: "POST", body: request, useAuth: true });
+}
+
+export function evaluateTradeSetupRisk(id, request) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}/risk-evaluation`, { method: "POST", body: request, useAuth: true });
+}
+
+export function linkTradeSetupBacktest(id, backtestRunId) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}/backtest-link`, {
+    method: "POST",
+    body: { backtestRunId },
+    useAuth: true,
+  });
+}
+
+export function practiceTradeSetupInPaperTrading(id, request) {
+  return apiRequest(`/api/v1/trade-setups/${encodeURIComponent(id)}/paper-order`, { method: "POST", body: request, useAuth: true });
+}
